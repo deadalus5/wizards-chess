@@ -27,6 +27,20 @@ download them.
 - Buttons, bottom right: sound, cinematic captures (off keeps your own camera and skips the
   slow motion), follow the side to move, flip the view, undo, new game.
 
+## The pieces
+
+Each statue wears the top of its chess piece on its head, large enough to tell the pieces apart
+from the player's seat. The metal is gold for Ivory and pale steel for Obsidian.
+
+| Piece | Look | Weapon and movement |
+|---|---|---|
+| Pawn | Helmet with the pawn's ball on top, cuirass and greaves | Spear; walks |
+| Knight | A metal horse's head in place of a human one, on a body in wrapped clothes: crossed jacket, sash, loose trousers, bound forearms and shins | Sword; leaps, and strikes as it lands |
+| Bishop | Tall mitre, belted robe to the shins, a cross raised on the back | Staff; glides |
+| Rook | Turret on the head and full plate: breastplate, collar, pauldrons, gauntlets, boots | War hammer; walks |
+| Queen | Coronet, cuirass, and a round shield on her back whose ring and one stroke make a Q | Two swords; walks |
+| King | Crown and cross, the heaviest pauldrons | Great sword carried on his back and drawn to strike; walks |
+
 Rules are chess.js; rendering is three.js; debris physics is Rapier. All models, animations and
 textures are CC0 (see `CREDITS.md`). Every sound is synthesised in the browser.
 

@@ -109,6 +109,33 @@ camera drifts round the hall until a click). The debug API `window.__sw` is alwa
   peak / RMS / timing / spectral centroid, and draws spectrograms over the page (screenshot it,
   then `__sw.hideAudioReport()`).
 
+### After changing a statue's shape
+
+Head-pieces, armour and fittings change a statue's height and outline, which the capture planner
+and the fracture both read. Run these before and after, and compare:
+
+1. Look: `scripts/lineup.sh out.png w` and `b` (the row, front and back), then
+   `scripts/piecesheet.sh out.png wn` for each piece changed. Check one view from the player's
+   normal camera too; a piece has to read from there, not only close up.
+2. Weapon reach: `__sw.strikes('w')` and `__sw.strikes('b')`. No entry in `versus` may end in
+   `MISS`, and `fkErrorMm` should stay at a few millimetres. The cylinder a weapon must enter
+   is 0.98 of the victim's height (`strikeTarget`, head-piece included), so a taller head-piece
+   moves some contacts; diff the strings against the run before the change and read each
+   difference.
+3. Fracture: `__sw.fractureReport()`: `openChunks` and `openEdges` must be 0 for every type.
+   Then break each changed piece and watch it (`__sw.smash('wn')` under `manual(true)` +
+   `step`, or `scripts/seqsheet.sh`): a part marked `fracture: 'own'` falls as one chunk,
+   `'attach'` parts ride on the nearest body chunk.
+4. Captures: `scripts/capsheet.sh` with the positions listed above, for each changed piece as
+   attacker and as victim; the weapon should be inside the body on the hit frame.
+5. Rules and leaks: `__sw.verify(games, 20)` over games that use every capture type, en passant,
+   promotion and both castles. Before and after, read `__sw.pipeline.renderer.info.memory`
+   (geometries, textures) and `__sw.pipeline.renderer.info.programs.length`; they should not grow.
+6. Frame cost: `__sw.headroom()` against the build before the change, taken the same day
+   (`git stash push -- src`, reload, measure, `git stash pop`). Vertex count per design is in
+   `fractureReport()`; generated parts are indexed by `mergeParts`, so a jump there usually means
+   a part is being built with unshared vertices on purpose (a hard edge) or by accident.
+
 ## Measured so far
 
 - Machine: Apple M5 Max, 3456x2234 panel; the test browser delivers 60 Hz rAF.
@@ -317,12 +344,19 @@ camera drifts round the hall until a click). The debug API `window.__sw` is alwa
    narrower than about 1000 px (the buttons wrap over the board).
 3. **Not verified:** Safari and Firefox (everything was checked in Chromium only); a real
    120 Hz display (the pacing logic is unit-tested, the test browser runs at 60 Hz); how any of
-   the sound actually sounds.
-4. Known rough edges: the first capture after a load can hitch for one frame (see "Measured");
-   thick plates still fold a little where their outline crosses the spine groove, and the
-   rook's pauldrons are ragged under the arm (a horizontal cut through the armpit); the
-   bishop's feet are bare under the robe; planted-foot drift above the 2 cm
-   target (see above); a statue that walks
-   onto the rubble pushes it with a capsule, so chips can remain under its feet until they
-   dissolve; a horizontal sword swing can pass through a bystander on a crowded board; the
-   mated king stays in the cast, invisible, after its stone has gone (so undo can restore it).
+   the sound actually sounds. Since the 2026-11-17 redesign the knight's, rook's and bishop's
+   captures and the knight, bishop, rook and queen breaking were watched frame by frame; the
+   queen's and king's captures only went through the scripted run and `strikes()`.
+4. Known rough edges:
+   - The first capture after a load can hitch for one frame (see "Measured").
+   - Thick plates still fold a little where their outline crosses the spine groove, and the
+     rook's pauldrons are ragged under the arm (a horizontal cut through the armpit).
+   - The bishop's feet are bare under the robe.
+   - Obsidian's plate, horse head and cross are pale steel, because they use the army's trim;
+     gold on both sides would mean changing `OBSIDIAN`'s trim colour in `stoneMaterial.ts`.
+   - Planted-foot drift is above the 2 cm target (see "Measured").
+   - A statue that walks onto the rubble pushes it with a capsule, so chips can remain under
+     its feet until they dissolve.
+   - A horizontal sword swing can pass through a bystander on a crowded board.
+   - The mated king stays in the cast, invisible, after its stone has gone (so undo can
+     restore it).
