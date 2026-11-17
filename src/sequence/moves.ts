@@ -23,8 +23,8 @@ export interface Stage {
   shatter: ShatterSystem;
   cinema: Cinema;
   gait(kind: BodyKind, clip: string): Gait;
-  /** Begin the beat of hit-stop and slow motion that marks a killing blow. */
-  slowMotion(): void;
+  /** Begin the beat of hit-stop and slow motion that marks a killing blow (`grand`: a longer, slower one). */
+  slowMotion(grand?: boolean): void;
   /** Where the player's own camera is (whatever shot is on screen). */
   viewerPosition(): THREE.Vector3;
 }

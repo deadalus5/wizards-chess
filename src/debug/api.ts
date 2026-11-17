@@ -14,14 +14,14 @@ import type { Director } from '../sequence/director';
 import type { ShatterSystem } from '../fx/shatter';
 import { squareCentre, type Side } from '../game/squares';
 import type { BakedClip } from '../anim/bake';
-import { staticClip } from '../anim/sculpt';
+import { aimBones, aimPose, createJoints, staticClip } from '../anim/sculpt';
 import type { Actor } from '../pieces/actor';
 import { buildPose, type Cast } from '../pieces/cast';
 import type { PoseSpec } from '../pieces/roster';
 import { openEdgesPerChunk } from '../pieces/fracture';
 import { PIECE_TYPES } from '../pieces/regalia';
 import { ATTACKS } from '../sequence/attacks';
-import { strikeFor } from '../sequence/capture';
+import { captureTuning, strikeFor, strikeZone } from '../sequence/capture';
 import { strikeTrack } from '../sequence/strike';
 import type { StatueKit } from '../pieces/statueKit';
 import type { LightRig } from '../render/lighting';
@@ -52,6 +52,8 @@ export interface DebugDeps {
   shatter: ShatterSystem;
   cinema: Cinema;
   reflection: { strength: number; enabled: boolean } | null;
+  /** How long things took while the loading screen was up. */
+  boot: { warmUpMs: number };
 }
 
 /** How far the ankle sits above the ball of the foot in a statue's frozen stance, metres. */
@@ -80,6 +82,8 @@ export function installDebugApi(d: DebugDeps): void {
   const api = {
     ...d,
     THREE,
+    /** Choices in how a capture is staged that can be switched for comparison. */
+    captureTuning,
 
     // ---------------------------------------------------------------- game
     fen: () => game.fen(),
@@ -287,7 +291,8 @@ export function installDebugApi(d: DebugDeps): void {
           controller.start(c.fen);
           api.step(0.2);
           api.begin(c.uci);
-          const row: Record<string, unknown> = { name: c.name ?? c.uci };
+          const marks: Record<string, number> = {};
+          const row: Record<string, unknown> = { name: c.name ?? c.uci, marks };
           let t = 0;
           let cut = false;
           let hit = false;
@@ -306,6 +311,9 @@ export function installDebugApi(d: DebugDeps): void {
             if (hit && !back && !d.cinema.active) {
               back = true;
               row.cutBack = +t.toFixed(2);
+            }
+            for (const [name, at] of Object.entries(d.director.marks)) {
+              if (!(name in marks) && d.director.time >= at) marks[name] = +t.toFixed(2);
             }
             await null;
             await null;
@@ -459,34 +467,64 @@ export function installDebugApi(d: DebugDeps): void {
      */
     strikes(side: Side = 'w'): unknown {
       const up = new THREE.Vector3(0, 1, 0);
-      return PIECE_TYPES.map((type) => {
+      const out: unknown[] = [];
+      for (const type of PIECE_TYPES) {
         const a = cast.living().find((x) => x.side === side && x.type === type);
-        if (!a) return { type, missing: true };
-        const spec = ATTACKS[type];
-        const clip = cast.clip(a.body, spec.clip);
-        const track = strikeTrack(a, clip, spec.weapon ?? 0);
-        const hit = spec.hits[spec.hits.length - 1];
-        a.drawWeapons(true);
-        a.animate([{ clip, time: hit, weight: 1 }]);
-        a.root.updateMatrixWorld(true);
-        const w = a.weapons[spec.weapon ?? 0];
-        const box = w.mesh.geometry.boundingBox!;
-        const c = box.getCenter(new THREE.Vector3());
-        const real = w.mesh.localToWorld(new THREE.Vector3(c.x, box.max.y, c.z));
-        const planned = track.point(hit, 1).applyAxisAngle(up, a.root.rotation.y).add(a.root.position);
-        const tip = track.point(hit, 1);
-        a.rest();
-        const versus = PIECE_TYPES.map((v) => {
-          const victim = cast.living().find((x) => x.side !== side && x.type === v);
-          if (!victim) return `${v}: none`;
-          return [1.25, 1.77, 3].map((limit) => {
-            const s = strikeFor(d.director.stage, a, victim, spec, limit);
-            const last = s.contacts[s.contacts.length - 1];
-            return `${v}@${limit}: d=${s.distance.toFixed(2)} turn=${((s.bearing * 180) / Math.PI).toFixed(0)} t=${s.contacts.map((k) => k.time.toFixed(2)).join('/')} along=${last.along.toFixed(1)} y=${last.point.y.toFixed(2)}${s.lands ? '' : ' MISS'}`;
-          }).join(' | ');
-        });
-        return { type, clip: spec.clip, fkErrorMm: +(real.distanceTo(planned) * 1000).toFixed(1), tipAtHit: tip.toArray().map((n) => +n.toFixed(2)), weaponBox: [box.min.y, box.max.y].map((n) => +n.toFixed(2)), versus };
-      });
+        if (!a) {
+          out.push({ type, missing: true });
+          continue;
+        }
+        for (const spec of ATTACKS[type]) {
+          const clip = cast.clip(a.body, spec.clip);
+          const hit = spec.hits[spec.hits.length - 1];
+          const w = a.weapons[spec.weapon ?? 0];
+          const box = w.mesh.geometry.boundingBox!;
+          const c = box.getCenter(new THREE.Vector3());
+          /** How far the planner's weapon tip is from the real one at the blow, with a given aim on. */
+          const fkError = (aim: number): number => {
+            const track = strikeTrack(a, clip, spec.weapon ?? 0, aim);
+            const bones = aimBones(a.template.rig);
+            const joints = createJoints(a.template.rig);
+            a.drawWeapons(true);
+            a.adjust = aim !== 0 && bones ? (pose) => aimPose(pose, a.template.rig, bones, aim, joints) : null;
+            a.animate([{ clip, time: hit, weight: 1 }]);
+            a.root.updateMatrixWorld(true);
+            const real = w.mesh.localToWorld(new THREE.Vector3(c.x, box.max.y, c.z));
+            const planned = track.point(hit, 1).applyAxisAngle(up, a.root.rotation.y).add(a.root.position);
+            a.rest();
+            return +(real.distanceTo(planned) * 1000).toFixed(1);
+          };
+          const tip = strikeTrack(a, clip, spec.weapon ?? 0).point(hit, 1);
+          let worstAim = 0;
+          const versus = PIECE_TYPES.map((v) => {
+            const victim = cast.living().find((x) => x.side !== side && x.type === v);
+            if (!victim) return `${v}: none`;
+            const zone = strikeZone(victim, spec, 'stand');
+            return (
+              `${v} [zone ${zone.bottom.toFixed(2)}-${zone.top.toFixed(2)}]: ` +
+              [1.25, 1.77, 3]
+                .map((limit) => {
+                  const s = strikeFor(d.director.stage, a, victim, spec, limit);
+                  const last = s.contacts[s.contacts.length - 1];
+                  if (Math.abs(s.aim) > Math.abs(worstAim)) worstAim = s.aim;
+                  return `@${limit}: d=${s.distance.toFixed(2)} turn=${((s.bearing * 180) / Math.PI).toFixed(0)} aim=${((s.aim * 180) / Math.PI).toFixed(0)} t=${s.contacts.map((k) => k.time.toFixed(2)).join('/')} along=${last.along.toFixed(1)} y=${last.point.y.toFixed(2)}${s.lands ? (s.short ? ' BODY' : '') : ' MISS'}`;
+                })
+                .join(' | ')
+            );
+          });
+          out.push({
+            type,
+            attack: spec.name,
+            clip: spec.clip,
+            fkErrorMm: fkError(0),
+            fkErrorAimedMm: worstAim !== 0 ? fkError(worstAim) : undefined,
+            tipAtHit: tip.toArray().map((n) => +n.toFixed(2)),
+            weaponBox: [box.min.y, box.max.y].map((n) => +n.toFixed(2)),
+            versus,
+          });
+        }
+      }
+      return out;
     },
 
     // ---------------------------------------------------------------- animation

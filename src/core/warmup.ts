@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { ChunkField } from '../fx/chunkField';
 import type { Effects } from '../fx/effects';
+import { GROUP, type Physics } from '../fx/physics';
+import { SQUARE } from '../game/squares';
 import type { Cast } from '../pieces/cast';
 import { PIECE_TYPES } from '../pieces/regalia';
 import type { Markers } from '../render/markers';
@@ -16,11 +18,56 @@ export interface WarmUpDeps {
   fx: Effects;
   markers: Markers;
   stage: Stage;
+  physics: Physics;
 }
+
+/** Distances a capture is made from: the next square, the next diagonal, and anything farther than a weapon reaches. */
+const NEXT_SQUARE = [SQUARE, SQUARE * Math.SQRT2];
+const REACHES = [...NEXT_SQUARE, 3];
 
 // One set of shatter materials is kept for good: a compiled program is thrown away when the
 // last material using it is disposed, and every break disposes its own.
 const keepers: ShatterMaterials[] = [];
+
+/**
+ * The physics engine is slow the first time it is handed a pile of bodies (measured: a single
+ * step of about 22 ms on some first captures, 2 ms ever after). Hand it a pile now: as many
+ * boxes as a statue breaks into, set down among a few fixed capsules, let go a few at a time
+ * as a break does, stepped until they have fallen and met the floor, then cleared away.
+ */
+function rehearseBreak(physics: Physics): void {
+  const { R, world } = physics;
+  const bodies: ReturnType<typeof world.createRigidBody>[] = [];
+  const pieces: typeof bodies = [];
+  for (let i = 0; i < 52; i++) {
+    const body = world.createRigidBody(
+      R.RigidBodyDesc.dynamic()
+        .setTranslation(40 + (i % 4) * 0.12, 0.3 + Math.floor(i / 4) * 0.13, 40 + ((i * 7) % 5) * 0.1)
+        .setLinearDamping(0.08)
+        .setAngularDamping(0.35)
+        .setEnabled(false),
+    );
+    world.createCollider(R.ColliderDesc.cuboid(0.07, 0.06, 0.05).setDensity(2.6).setFriction(0.85).setRestitution(0.1).setCollisionGroups(GROUP.FRAGMENT_FRESH), body);
+    bodies.push(body);
+    pieces.push(body);
+  }
+  for (let i = 0; i < 6; i++) {
+    const body = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(39 + i * 0.5, 0.85, 41));
+    world.createCollider(R.ColliderDesc.capsule(0.55, 0.27).setCollisionGroups(GROUP.SOLID), body);
+    bodies.push(body);
+  }
+  for (let step = 0; step < 90; step++) {
+    // A few more let go every step, and after a while they may strike one another.
+    for (let i = step * 4; i < Math.min(pieces.length, step * 4 + 4); i++) {
+      pieces[i].setEnabled(true);
+      pieces[i].setLinvel({ x: (i % 3) - 1, y: 1, z: ((i * 5) % 3) - 1 }, true);
+      pieces[i].setAngvel({ x: 3, y: -2, z: 1 }, true);
+    }
+    if (step === 30) for (const p of pieces) p.collider(0).setCollisionGroups(GROUP.FRAGMENT);
+    world.step();
+  }
+  for (const body of bodies) world.removeRigidBody(body);
+}
 
 /**
  * Exercise, behind the loading screen, everything that would otherwise be set up at the
@@ -28,15 +75,22 @@ const keepers: ShatterMaterials[] = [];
  * breaking statue uses (and their shadow versions), the particle shaders, the depth-of-field
  * and particle passes, the markers, and the weapon-reach solutions for every pairing.
  */
-export function warmUp({ pipeline, cast, fx, markers, stage }: WarmUpDeps): void {
-  // Where every kind of attacker stands against every kind of victim.
+export function warmUp({ pipeline, cast, fx, markers, stage, physics }: WarmUpDeps): void {
+  rehearseBreak(physics);
+
+  // Where every kind of attacker stands, and how it aims, against every kind of victim, for
+  // each of its attacks: from the next square (straight or diagonal, exactly), from the
+  // farthest its weapon reaches, and from those two distances as limits.
   for (const a of PIECE_TYPES) {
     const attacker = cast.actors.find((x) => x.type === a);
     if (!attacker) continue;
     for (const v of PIECE_TYPES) {
       const victim = cast.actors.find((x) => x.type === v && x.side !== attacker.side);
       if (!victim) continue;
-      for (const reach of [1.25, 1.77, 3]) strikeFor(stage, attacker, victim, ATTACKS[a], reach);
+      for (const spec of ATTACKS[a]) {
+        for (const reach of REACHES) strikeFor(stage, attacker, victim, spec, reach);
+        for (const reach of NEXT_SQUARE) strikeFor(stage, attacker, victim, spec, reach, 'stand', reach);
+      }
     }
   }
 

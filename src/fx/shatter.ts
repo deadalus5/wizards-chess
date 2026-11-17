@@ -16,6 +16,12 @@ export interface Blow {
   direction: THREE.Vector3;
   /** Speed imparted to the nearest fragments, metres per second. */
   power: number;
+  /**
+   * Where the weapon goes on from the blow: points on it in world space, each with the seconds
+   * after the blow at which it is there, in order of time. Stone lets go as the weapon reaches
+   * it, so a weapon carried on through the figure never passes through a piece still standing.
+   */
+  sweep?: { at: number; point: THREE.Vector3 }[];
 }
 
 interface Piece {
@@ -73,6 +79,24 @@ const _c = new THREE.Vector3();
  * then on writing each body's motion into the chunk-matrix texture the shader reads.
  */
 export class ShatterSystem {
+  /**
+   * How a break spreads and how its pieces are thrown. Open to adjustment so that settings can
+   * be compared on the same blow.
+   */
+  readonly tuning = {
+    /** Seconds for the break to travel from one chunk to the next, outward from the blow. */
+    wave: 0.01,
+    /** Share of the blow's power that throws pieces outward, on top of driving them along the blow. */
+    burst: 0.6,
+    /**
+     * Outward means sideways from the upright line through the point of the blow, so that a
+     * blow to the head bursts the figure apart. (False: straight away from that point, which
+     * from the top of a head is mostly downward.)
+     */
+    level: true,
+    /** Stone lets go as the weapon reaches it, rather than waiting for the break to spread that far. */
+    follow: true,
+  };
   private readonly breaks: Break[] = [];
   private readonly rng = new Rng(1234);
   private pusher: { body: RAPIER.RigidBody; actor: Actor } | null = null;
@@ -223,6 +247,8 @@ export class ShatterSystem {
     }
 
     const dir = blow.direction.clone().setY(blow.direction.y * 0.5).normalize();
+    /** How near the weapon must come to a piece to knock it loose, metres. */
+    const reach = 0.3 * scale;
     const pieces: Piece[] = [];
     for (const cluster of clusters) {
       const origin = new THREE.Vector3();
@@ -241,18 +267,33 @@ export class ShatterSystem {
       const h = Math.min(...cluster.map((c) => hop[c.id]));
       const falloff = 1 / (1 + h * 0.5);
       const radial = origin.clone().sub(blow.point);
-      radial.y *= 0.4;
+      if (this.tuning.level) {
+        radial.y = 0;
+        // Right under (or over) the blow there is no sideways to speak of: any way will do.
+        if (radial.lengthSq() < 1e-4) radial.set(rng.range(-1, 1), 0, rng.range(-1, 1));
+      } else {
+        radial.y *= 0.4;
+      }
       if (radial.lengthSq() > 1e-6) radial.normalize();
       const velocity = new THREE.Vector3()
         .addScaledVector(dir, blow.power * falloff * rng.range(0.7, 1.15))
-        .addScaledVector(radial, blow.power * 0.45 * falloff * rng.range(0.6, 1.2))
+        .addScaledVector(radial, blow.power * this.tuning.burst * falloff * rng.range(0.6, 1.2))
         .add(new THREE.Vector3(rng.range(-0.4, 0.4), rng.range(0.3, 1.5) * falloff + 0.2, rng.range(-0.4, 0.4)));
       const spin = new THREE.Vector3(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).multiplyScalar(6 * falloff + 0.6);
+      // The break spreads outward from the blow, but nothing waits for it once the weapon is upon it.
+      let release = h * this.tuning.wave + rng.range(0, 0.006);
+      for (const s of (this.tuning.follow && blow.sweep) || []) {
+        if (s.at >= release) break;
+        if (s.point.distanceToSquared(origin) < reach * reach) {
+          release = Math.max(0, s.at - 0.004);
+          break;
+        }
+      }
       pieces.push({
         body,
         chunks: cluster.map((c) => c.id),
         inverse0: new THREE.Matrix4().makeTranslation(-origin.x, -origin.y, -origin.z),
-        release: h * 0.007 + rng.range(0, 0.006),
+        release,
         released: false,
         velocity,
         spin,

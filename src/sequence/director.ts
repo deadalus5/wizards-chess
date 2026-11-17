@@ -10,12 +10,19 @@ import type { Timeline } from './timeline';
 export type StageDeps = Omit<Stage, 'slowMotion'>;
 
 // The beat at a killing blow, in real seconds: the picture all but freezes on the frame the
-// weapon lands, then the break plays out slowed down, then time eases back to normal.
-const HIT_STOP = 0.07;
-const SLOW_HOLD = 0.5;
-const SLOW_EASE = 0.5;
+// weapon lands, then the break plays out slowed down (long enough to watch the statue come
+// apart and its pieces fly), then time eases back to normal.
+interface Beat {
+  stop: number;
+  hold: number;
+  ease: number;
+  /** Time scale while slowed (1 = real time). */
+  scale: number;
+}
+const BLOW: Beat = { stop: 0.08, hold: 0.75, ease: 0.6, scale: 0.25 };
+/** A longer, slower beat for a death that is meant to be dwelt on. */
+const GRAND: Beat = { stop: 0.1, hold: 1.0, ease: 0.8, scale: 0.21 };
 const HIT_STOP_SCALE = 0.02;
-const SLOW_SCALE = 0.28;
 
 /**
  * Plays each move out on the board. A move is planned as a timeline, then advanced every
@@ -36,9 +43,10 @@ export class Director implements Presenter {
   private fail: ((err: unknown) => void) | null = null;
   /** Real seconds since the killing blow, or -1 when time is running normally. */
   private beat = -1;
+  private pace: Beat = BLOW;
 
   constructor(deps: StageDeps) {
-    this.stage = { ...deps, slowMotion: () => this.slowMotion() };
+    this.stage = { ...deps, slowMotion: (grand) => this.slowMotion(grand) };
     addEventListener('keydown', (e) => {
       if (e.code === 'Space' && this.timeline) {
         e.preventDefault();
@@ -69,9 +77,16 @@ export class Director implements Presenter {
     done?.();
   }
 
-  private slowMotion(): void {
+  private slowMotion(grand = false): void {
     // Not while the player is skipping ahead.
-    if (this.slowMotionEnabled && this.speed <= 1.01) this.beat = 0;
+    if (!this.slowMotionEnabled || this.speed > 1.01) return;
+    this.pace = grand ? GRAND : BLOW;
+    this.beat = 0;
+  }
+
+  /** Named moments of the move being played, in seconds on its timeline (for measuring and for stills). */
+  get marks(): Readonly<Record<string, number>> {
+    return this.timeline?.marks ?? {};
   }
 
   present(event: MoveEvent): Promise<void> {
@@ -90,13 +105,14 @@ export class Director implements Presenter {
     if (this.beat >= 0) {
       this.beat += dt;
       const b = this.beat;
-      if (this.speed > 1.01 || b >= HIT_STOP + SLOW_HOLD + SLOW_EASE) {
+      const { stop, hold, ease, scale } = this.pace;
+      if (this.speed > 1.01 || b >= stop + hold + ease) {
         this.beat = -1;
         this.timeScale = 1;
-      } else if (b < HIT_STOP) {
+      } else if (b < stop) {
         this.timeScale = HIT_STOP_SCALE;
       } else {
-        this.timeScale = SLOW_SCALE + (1 - SLOW_SCALE) * smoothstep(HIT_STOP + SLOW_HOLD, HIT_STOP + SLOW_HOLD + SLOW_EASE, b);
+        this.timeScale = scale + (1 - scale) * smoothstep(stop + hold, stop + hold + ease, b);
       }
     }
     const gameDt = dt * this.timeScale * this.speed;

@@ -208,7 +208,9 @@ async function boot(): Promise<void> {
   // Compile everything, then exercise the paths a capture takes, before the reveal.
   await pipeline.renderer.compileAsync(scene, camera);
   rig.update(0);
-  warmUp({ pipeline, cast, fx, markers, stage: director.stage });
+  const warmStart = performance.now();
+  warmUp({ pipeline, cast, fx, markers, stage: director.stage, physics });
+  const boot = { warmUpMs: Math.round(performance.now() - warmStart) };
   loop.start();
   loading.progress(1, 'Ready');
   loading.done();
@@ -232,7 +234,7 @@ async function boot(): Promise<void> {
     });
   }
 
-  installDebugApi({ scene, camera, pipeline, lights, cast, kit, loop, rig, game, controller, markers, perf, stress, director, frame, shatter, cinema, reflection });
+  installDebugApi({ scene, camera, pipeline, lights, cast, kit, loop, rig, game, controller, markers, perf, stress, director, frame, shatter, cinema, reflection, boot });
 }
 
 boot().catch((err) => {

@@ -24,6 +24,8 @@ interface Cue {
 export class Timeline {
   duration = 0;
   time = 0;
+  /** Named moments, in seconds, that whoever planned the sequence wants to be findable later. */
+  readonly marks: Record<string, number> = {};
   private readonly spans: Span[] = [];
   private readonly cues: Cue[] = [];
   private readonly cleanups: Array<() => void> = [];
