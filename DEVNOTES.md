@@ -66,7 +66,9 @@ camera drifts round the hall until a click). The debug API `window.__sw` is alwa
     while the render loop is running. Under manual stepping use `resize w h` first, then plain `shot`,
     and `resize 1600 860` afterwards.
 - Contact sheets: `scripts/sheet.sh out.png <cols> img...` (ffmpeg; this build has no `drawtext`).
-- Helpers: `scripts/lineup.sh` (close-up per piece type), `scripts/lookdev.sh` (four views),
+- Helpers: `scripts/lineup.sh out [w|b]` (all six piece types of one side in a row, from the front
+  and from behind), `scripts/piecesheet.sh out wq` (four views of one statue on its own: front,
+  three-quarter, side, back; framed by the statue's height), `scripts/lookdev.sh` (four fixed views),
   `scripts/clipsheet.sh` (frames of one clip in the clip lab), `scripts/movesheet.sh` (frames of
   one chess move under manual stepping), `scripts/seqsheet.sh` (frames of any setup + trigger),
   `scripts/capsheet.sh out fen uci [frames dt cols w h lead]` (one move through the game's own
@@ -75,6 +77,9 @@ camera drifts round the hall until a click). The debug API `window.__sw` is alwa
   Set `SHOT_DIR` to a scratch folder. zsh aborts on unmatched globs: delete with `find -delete`.
   Stills are stepped manually, so CSS transitions (HUD fade) appear mid-way in them; that is an
   artefact of stepping faster than real time.
+- K + minor piece v K is a draw and puts the result dialog over the shot: give lookdev positions
+  a pawn each (`4k3/7p/8/8/3N4/8/P7/4K3 w - - 0 1`). The interface is `#hud`; the lookdev scripts
+  hide it with `visibility: hidden` while they shoot.
 - Handy capture positions: pawn `4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1` e4d5; rook
   `4k3/8/8/n7/8/8/8/R3K3 w - - 0 1` a1a5; queen `4k3/8/3b4/8/8/8/8/3QK3 w - - 0 1` d1d6; king
   `4k3/8/8/8/8/8/4r3/4K3 w - - 0 1` e1e2; bishop `4k3/8/8/8/5p2/8/8/2B1K3 w - - 0 1` c1f4; knight
@@ -115,7 +120,9 @@ camera drifts round the hall until a click). The debug API `window.__sw` is alwa
 - Planted-foot drift after the foot planter: mostly 1-4 cm, up to 8 cm on a turning sidestep,
   concentrated at lift-off. Target was 2 cm; not met.
 - Fracture: 47-48 chunks per design; female body watertight; male body has one non-manifold edge
-  in one chunk (from the source mesh).
+  in one chunk (from the source mesh). After the 2026-11-17 redesign: 47 chunks each, 48 for the
+  queen (her shield is one of its own), no open chunks; vertices per design 21-33 thousand
+  (they were 30-44 thousand: generated parts now share identical vertices), triangles 20-34 thousand.
 - Scripted games: 47 moves over six games (both castles, en passant, promotion, mate, stalemate)
   ended consistent with chess.js. (One entry in that list was an illegal move of mine: `a2a1n`
   while in check.) After captures were added: 45 more moves over seven games at 20x speed
@@ -140,6 +147,21 @@ camera drifts round the hall until a click). The debug API `window.__sw` is alwa
 - Sound levels rendered offline (dBFS peak): footstep -18 (light) / -14 (heavy), landing -10,
   whoosh -17, staggering blow -8, killing blow -4, shatter -16 before a later +4 dB, select -23,
   check bell -19, finale -8, ambience -23 peak / -36 RMS. Nothing clips.
+- After the 2026-11-17 redesign (bigger head-pieces, horse-headed knight, robed bishop, plated
+  rook, queen's shield), compared with the build before it on the same day:
+  - `strikes()` for both sides: 216 placements, none a miss, forward-kinematics error unchanged
+    (0-2.3 mm); 8 placements differ, all because a victim's head-piece is taller (the rook's slam
+    from the next square meets pawn, bishop and queen 6-16 cm higher at the same moment; the
+    queen's slash meets a pawn 0.01 s sooner). Statue heights: pawn 1.73 m (was 1.67), knight
+    2.01 (2.01), bishop 2.27 (2.12), rook 2.22 (2.18), queen 2.21 (2.11), king 2.61 (2.46).
+  - 55 moves over 15 scripted games at 20x (every capture type, en passant, promotion by capture
+    and to a knight, both castles, mate) consistent; geometries, textures and programs flat
+    over repeated runs (100 / 101 / 52).
+  - Frame cost is level: three full renders fit in a 60 Hz refresh before and after (four take
+    25 ms in both); idle CPU 2.3 ms a frame (2.4 before). Four captures in real time: none missed.
+  - The first capture after a page load can have one frame of about 25 ms of CPU at the blow.
+    The build before the redesign does the same (23.7 ms in one of two runs), so the warm-up no
+    longer covers everything; not looked into.
 - Attack clips, hit times in seconds (reach of the weapon tip in metres at scale 1):
   Spear_Thrust 0.45 (1.76 with spear_A x1.15); Two_Handed_Overhead_Slam 0.73 (1.05, hammer_B);
   Sword_Attack 0.54 (1.5, sword_C); Staff_Combo hits at 0.52 and 1.2 (about 1.5, staff_B);
@@ -167,11 +189,51 @@ camera drifts round the hall until a click). The debug API `window.__sw` is alwa
   from a float texture (`fx/chunkField.ts`) and has a matching depth material. Looks: `IVORY`,
   `OBSIDIAN`. Program cache keys are `stone-v4*`; bump them when the shader text changes.
 - **Statues** (`src/pieces`): `statueKit.ts` (bodies, hair, rigs, clip retargeting cache),
-  `regalia.ts` (chess-piece tops as head-pieces, fitted helmet), `armor.ts` (plates generated from
-  the body surface as offset shells that keep the skin weights, plus hanging skirt plates),
-  `roster.ts` (one design per piece type: body, hair, scale, weapons, armour, rest pose, mover,
-  gaits), `buildPiece.ts` + `fracture.ts` (merge into one skinned geometry, pre-fracture, caps),
-  `actor.ts`, `cast.ts`, `weapons.ts`.
+  `regalia.ts` (chess-piece tops as head-pieces, fitted helmet, the knight's horse head),
+  `armor.ts` (plates and clothes generated from the body surface as offset shells that keep the
+  skin weights; hanging skirt plates; hanging cloth), `fittings.ts` (rigid sculpted fittings:
+  the queen's shield, the rook's toe caps), `roster.ts` (one design per piece type: body, hair,
+  scale, weapons, armour, cloth, fittings, rest pose, mover, gaits), `buildPiece.ts` +
+  `fracture.ts` (merge into one skinned geometry, pre-fracture, caps), `actor.ts`, `cast.ts`
+  (`buildDesign` assembles a design), `weapons.ts`.
+- **What each piece wears** (all in the two existing materials: the army's stone, and its metal
+  trim, which is gold for Ivory and pale steel for Obsidian):
+  - Head-pieces are the tops of the chess pieces worn large (`HEAD_PIECES`: `fit` to the skull,
+    `tall` stretches, `flare` widens the top and leaves the foot head-sized). Pawn: ball on a
+    helmet. Bishop: tall mitre. Rook: flared turret. Queen: coronet. King: crown and cross.
+  - Knight: the head is cut off the body at the neck (`cutAway`) and the chess knight's horse,
+    from the collar up, is set on the head bone at 0.98 m per king height (`horseHead`), with
+    eyes that take the eye glow. Wrapped clothes: crossed jacket with a gilt edge (`gi`), sash
+    with hanging ends, loose trousers, bound forearms and shins.
+  - Bishop: long-sleeved robe with bell cuffs (`vestment`), a cross raised from the robe's own
+    surface on the back, gilt belt, and a pleated robe to the shins (`drape`).
+  - Rook: all-metal plate: breast and back plate with a lapped belly plate, standing collar,
+    two-lame pauldrons, flared gauntlets, boots with a cuff, knee plates and rigid toe caps.
+  - Queen: round shield on the back (rigid on `spine_03`, breaks away whole) whose raised ring
+    and one stroke make a Q; a baldric over the cuirass.
+- **Shells** (`buildShell`): besides clip planes, `exclude` cuts convex holes (necklines, the
+  arms of the cross are what is left after four corners are cut away), `thickness` may be a
+  function of position (bell sleeves, boot cuffs), `smooth` evens the offset surface and makes
+  the plate end in a clean cut (its outline is moved out within the planes that cut it, parallel
+  to itself), `bandNarrow: 0` drops the gilt edge (cloth). A shell can be cut from another shell
+  (the cross from the robe, the jacket's flap from the jacket). Pieces written before the
+  redesign do not use `smooth` and are built as they were.
+  - A cut-out is made by splitting every triangle along every plane of the hole, on both sides,
+    so that neighbours still meet edge to edge; cutting only inside the hole leaves T-junctions,
+    which read as outline. Those planes therefore pass through the outline elsewhere too: a
+    plane counts as cutting the outline only where an outline edge lies in it.
+  - The wall round a plate's edge is oriented from the triangle's winding, not from its third
+    vertex (clipping leaves slivers whose third vertex all but lies on the edge).
+  - Neck holes are elliptical prisms whose floor is deep inside the chest, so only their sides
+    meet the surface; a horizontal cut across the trapezius is nearly parallel to it and ragged.
+- **Cloth** (`drape`): falls from the widest part of the body above each point, in spans (gaps
+  are slits), skinned to the pelvis, the nearer thigh and, below the knee and away from the
+  middle, that leg's shin: never more than four bones, and the same four on both sides of the
+  seam at the back (five, with ties broken differently, opened a crack there).
+- **Parts** can carry per-vertex `region` and `layer` attributes (a fitting of stone and metal,
+  the horse's eyes); a material boundary must not share vertices, or the region interpolates
+  through the eye value between them. `mergeParts` indexes every generated part
+  (`shareVertices`), which draws the same and costs the vertex shader far less.
 - **Animation** (`src/anim`): clips are retargeted by world-space rest-pose deltas and baked to
   uniform frames (`bake.ts`); `pose.ts` samples with Catmull-Rom and blends layers with per-bone
   masks (three's AnimationMixer is not used); `gait.ts` measures ground speed and footfalls;
@@ -256,7 +318,11 @@ camera drifts round the hall until a click). The debug API `window.__sw` is alwa
 3. **Not verified:** Safari and Firefox (everything was checked in Chromium only); a real
    120 Hz display (the pacing logic is unit-tested, the test browser runs at 60 Hz); how any of
    the sound actually sounds.
-4. Known rough edges: planted-foot drift above the 2 cm target (see above); a statue that walks
+4. Known rough edges: the first capture after a load can hitch for one frame (see "Measured");
+   thick plates still fold a little where their outline crosses the spine groove, and the
+   rook's pauldrons are ragged under the arm (a horizontal cut through the armpit); the
+   bishop's feet are bare under the robe; planted-foot drift above the 2 cm
+   target (see above); a statue that walks
    onto the rubble pushes it with a capsule, so chips can remain under its feet until they
    dissolve; a horizontal sword swing can pass through a bystander on a crowded board; the
    mated king stays in the cast, invisible, after its stone has gone (so undo can restore it).

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Pose, poseJoints } from '../anim/pose';
 import { canon, rigFromBones, type Rig } from '../anim/rig';
 import { fractureMesh, type BoneInfo, type ChunkInfo, type FractureMode, type MeshData, type PartRange } from './fracture';
+import { shareVertices } from './geometryTools';
 
 /** Layers of the shared normal-map array. */
 export const LAYER = { flat: 0, male: 1, female: 2, hair1: 3, hair2: 4, chess: 5 } as const;
@@ -93,7 +94,9 @@ export function skinnedPartsOf(
 
 /** Concatenate parts into flat arrays, the body first. */
 function mergeParts(parts: readonly PiecePart[], boneIndex: Map<string, number>): { mesh: MeshData; ranges: PartRange[] } {
-  const ordered = [...parts].sort((a, b) => Number(b.fracture === 'body') - Number(a.fracture === 'body'));
+  const ordered = [...parts]
+    .sort((a, b) => Number(b.fracture === 'body') - Number(a.fracture === 'body'))
+    .map((p) => (p.geometry.index ? p : { ...p, geometry: shareVertices(p.geometry) }));
   let vertexCount = 0;
   let indexCount = 0;
   for (const p of ordered) {
@@ -123,6 +126,9 @@ function mergeParts(parts: readonly PiecePart[], boneIndex: Map<string, number>)
     const sw = g.getAttribute('skinWeight');
     // Optional per-vertex distance to the edge of an armour plate (drives the gilded edge band).
     const band = g.getAttribute('band');
+    // Optional per-vertex surface region and normal-map layer, for parts made of more than one material.
+    const regions = g.getAttribute('region');
+    const layers = g.getAttribute('layer');
     const rigidBone = p.bone !== undefined ? boneIndex.get(canon(p.bone)) : undefined;
     if (p.bone !== undefined && rigidBone === undefined) throw new Error(`unknown bone ${p.bone}`);
     if (rigidBone === undefined && (!si || !sw)) throw new Error('part has neither skin weights nor a bone');
@@ -153,8 +159,8 @@ function mergeParts(parts: readonly PiecePart[], boneIndex: Map<string, number>)
         if (sum > 1e-6) for (let k = 0; k < 4; k++) mesh.skinWeight[v * 4 + k] /= sum;
         else mesh.skinWeight[v * 4] = 1;
       }
-      mesh.part[v * 4] = p.layer;
-      mesh.part[v * 4 + 1] = p.region;
+      mesh.part[v * 4] = layers ? layers.getX(i) : p.layer;
+      mesh.part[v * 4 + 1] = regions ? regions.getX(i) : p.region;
       mesh.part[v * 4 + 2] = 0;
       mesh.part[v * 4 + 3] = band ? band.getX(i) : 1;
     }

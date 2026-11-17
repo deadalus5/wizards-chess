@@ -147,3 +147,45 @@ export function mergeSimple(geometries: readonly THREE.BufferGeometry[]): THREE.
   }
   return build(verts);
 }
+
+/**
+ * Share vertices that are identical in every attribute, returning an indexed geometry that
+ * draws exactly the same. Generated parts (plates, cloth, head-pieces) are built triangle by
+ * triangle; indexed, they cost the vertex shader a fraction as much.
+ */
+export function shareVertices(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  if (g.index) return g;
+  const names = Object.keys(g.attributes);
+  const attributes = names.map((name) => g.getAttribute(name) as THREE.BufferAttribute);
+  const count = attributes[0].count;
+  const seen = new Map<string, number>();
+  const index = new Uint32Array(count);
+  const keep: number[] = [];
+  const key: number[] = [];
+  for (let i = 0; i < count; i++) {
+    key.length = 0;
+    for (const a of attributes) {
+      for (let k = 0; k < a.itemSize; k++) key.push(Math.round(a.getComponent(i, k) * 1e6));
+    }
+    const id = key.join(',');
+    let at = seen.get(id);
+    if (at === undefined) {
+      at = keep.length;
+      keep.push(i);
+      seen.set(id, at);
+    }
+    index[i] = at;
+  }
+  const out = new THREE.BufferGeometry();
+  names.forEach((name, n) => {
+    const a = attributes[n];
+    const Type = a.array.constructor as new (length: number) => THREE.TypedArray;
+    const array = new Type(keep.length * a.itemSize);
+    for (let v = 0; v < keep.length; v++) {
+      for (let k = 0; k < a.itemSize; k++) array[v * a.itemSize + k] = a.getComponent(keep[v], k);
+    }
+    out.setAttribute(name, new THREE.BufferAttribute(array, a.itemSize));
+  });
+  out.setIndex(new THREE.BufferAttribute(index, 1));
+  return out;
+}

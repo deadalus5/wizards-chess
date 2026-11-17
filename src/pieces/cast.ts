@@ -5,9 +5,10 @@ import { canon } from '../anim/rig';
 import type { Side } from '../game/squares';
 import { createStoneMaterial, IVORY, OBSIDIAN, type StoneLook } from '../render/stoneMaterial';
 import { Actor } from './actor';
-import { armorShell, landmarks, pteruges } from './armor';
+import { armorParts, cutAway, drape, landmarks, pteruges, restJoints } from './armor';
 import { buildTemplate, LAYER, REGION, type PieceTemplate } from './buildPiece';
-import { headPiece, measureHead, PIECE_TYPES, type ChessSet, type PieceType } from './regalia';
+import { backShield, toeCaps } from './fittings';
+import { headPiece, horseHead, measureHead, PIECE_TYPES, type ChessSet, type PieceType } from './regalia';
 import { DESIGNS } from './roster';
 import type { BodyKind, StatueKit } from './statueKit';
 import { loadPropGeometry } from './weapons';
@@ -66,21 +67,51 @@ export class Cast {
     return cast;
   }
 
-  /** Body + head-piece + fitted armour + skirt, merged and pre-fractured. */
+  /** Body + head-piece + fitted armour and clothes + skirt + fittings, merged and pre-fractured. */
   private static buildDesign(type: PieceType, kit: StatueKit, chess: ChessSet): PieceTemplate {
     const design = DESIGNS[type];
-    const parts = kit.bodyParts(design.body, design.hair);
+    let parts = kit.bodyParts(design.body, design.hair);
     const body = parts.find((p) => p.layer === LAYER.male || p.layer === LAYER.female);
     if (!body) throw new Error('body part not found');
+    // Armour is cut from the whole body, whatever is done to the head below.
+    const skin = body.geometry;
     const skeleton = kit.skeleton(design.body);
-    parts.push(...headPiece(type, chess, measureHead(body, skeleton), body.geometry));
-    const marks = landmarks(kit.rig(design.body));
-    for (const piece of design.armor) parts.push({ geometry: armorShell(body.geometry, piece, marks), layer: body.layer, region: REGION.plate });
-    if (design.skirt > 0) {
-      const boneIndex = (name: string): number => skeleton.bones.findIndex((b) => canon(b.name) === name);
-      parts.push({ geometry: pteruges(body.geometry, marks, boneIndex, design.skirt), layer: LAYER.flat, region: REGION.plate });
+    const rig = kit.rig(design.body);
+    const marks = landmarks(rig);
+    const boneIndex = (name: string): number => skeleton.bones.findIndex((b) => canon(b.name) === name);
+
+    if (design.horse) {
+      // The head comes off at the neck (with its eyes and brows) and the horse's goes on.
+      const cut = marks.neckY + 0.03;
+      body.geometry = cutAway(skin, { nx: 0, ny: -1, nz: 0, d: cut }, (x) => Math.abs(x) < 0.2);
+      parts = parts.filter((p) => p === body);
+      parts.push(...horseHead(chess, { base: new THREE.Vector3(0, marks.neckY - 0.022, marks.neckZ + 0.012), size: design.horse }));
+    } else {
+      parts.push(...headPiece(type, chess, measureHead(body, skeleton), skin));
+    }
+    for (const piece of design.armor) parts.push(...armorParts(skin, piece, marks, body.layer));
+    if (design.skirt > 0) parts.push({ geometry: pteruges(skin, marks, boneIndex, design.skirt), layer: LAYER.flat, region: REGION.plate });
+    for (const d of design.drapes ?? []) parts.push({ geometry: drape(skin, marks, boneIndex, d), layer: LAYER.flat, region: d.metal ? REGION.trim : REGION.plate });
+    if (design.shield) {
+      // Between the shoulder blades, clear of the back.
+      const y = marks.chestY + 0.02;
+      parts.push(backShield({ radius: design.shield, centre: new THREE.Vector3(0, y, Cast.backOf(skin, y) - 0.05), lean: -0.07 }));
+    }
+    if (design.toeCaps) {
+      const joints = restJoints(rig);
+      parts.push(...toeCaps(joints.get('ball_l')!, joints.get('ball_leaf_l')!));
     }
     return buildTemplate(parts, skeleton, { seed: type.charCodeAt(0) });
+  }
+
+  /** How far back the body reaches near the spine at a height (bind pose). */
+  private static backOf(body: THREE.BufferGeometry, y: number): number {
+    const pos = body.getAttribute('position');
+    let z = 0;
+    for (let i = 0; i < pos.count; i++) {
+      if (Math.abs(pos.getY(i) - y) < 0.1 && Math.abs(pos.getX(i)) < 0.14) z = Math.min(z, pos.getZ(i));
+    }
+    return z;
   }
 
   /** A retargeted clip for a body type. Throws if it was not preloaded. */
