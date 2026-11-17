@@ -14,7 +14,22 @@ numbers already measured, and what is left. Update it when any of that changes.
   characters from existing games or films.
 - Look at what is built (screenshots, frame strips) and measure frame rate; iterate until it is
   genuinely good.
-- No `git init` / commits unless asked.
+- Git: repo at https://github.com/deadalus5/wizards-chess (public). Commit / push only when asked.
+
+## Hosting
+
+- Live at https://deadalus5.github.io/wizards-chess/ via GitHub Pages (source: GitHub Actions).
+  `.github/workflows/deploy.yml` runs `npm ci`, `npm test`, `npm run build` and deploys `dist/` on
+  every push to `main`.
+- Vite's `base` is `/wizards-chess/` for builds only (dev stays at `/`); `ASSETS` in
+  `src/pieces/assets.ts` is built from `import.meta.env.BASE_URL`. Any new runtime URL must do the
+  same, or it 404s on Pages. `npm run preview` now serves at `/wizards-chess/`.
+- `public/assets` (about 140 MB, largest file 6.8 MB) is committed rather than fetched in CI:
+  the itch.io / Poly Haven / ambientCG downloads are the least reliable step. Keep single files well
+  under GitHub's 100 MB limit.
+- Test-browser gotcha: if the Chrome for Testing window is behind other windows, rAF stops and a
+  move never finishes (only screenshots force frames). `osascript -e 'tell application "Google
+  Chrome for Testing" to activate'` first, and check `__sw.loop.callbacks` advances ~60/s.
 
 ## Run and check
 
