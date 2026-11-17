@@ -89,7 +89,6 @@ export function planCheckmate(tl: Timeline, stage: Stage, loser: Side, t0: numbe
   const at = king.root.position.clone();
   const yaw = king.root.rotation.y;
   const kneel = cast.clip(king.body, SPECIAL_CLIPS[0]);
-  const rest = cast.clip(king.body, king.design.rest.clip);
   const winners = cast.living().filter((a) => a.side !== loser);
 
   const start = t0 + 0.5;
@@ -107,7 +106,7 @@ export function planCheckmate(tl: Timeline, stage: Stage, loser: Side, t0: numbe
   });
 
   const layers: PoseLayer[] = [
-    { clip: rest, time: king.design.rest.time, weight: 1 },
+    { clip: king.frozen, time: 0, weight: 1 },
     { clip: kneel, time: from, weight: 0 },
   ];
   tl.at(start, () => {

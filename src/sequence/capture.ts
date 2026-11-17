@@ -7,7 +7,7 @@ import { homeYaw, squareCentre, yawTowards } from '../game/squares';
 import type { Actor, PoseLayer } from '../pieces/actor';
 import type { PieceType } from '../pieces/regalia';
 import { ATTACKS, REACT, type AttackSpec } from './attacks';
-import { planGlide, planTravel, planTurn, planWalk, TURN_RATE, type Stage } from './moves';
+import { baseLayers, planStepOn, planTravel, planTurn, setBase, turnDuration, type Stage } from './moves';
 import { planPromotion } from './special';
 import { findContact, solveStrike, StrikeTrack, strikeTrack, type Contact, type StrikeSolution } from './strike';
 import { Timeline } from './timeline';
@@ -29,21 +29,22 @@ interface Segment {
 }
 
 /**
- * Play a set of overlapping clips on a statue standing at `position` with heading `yaw`,
- * over its frozen pose. Wherever no clip has weight the frozen pose shows through.
+ * Play a set of overlapping clips on a statue standing ready at `position` with heading `yaw`
+ * (it has already risen, if it is one that rises). Wherever no clip has weight its standing
+ * pose shows through.
  */
-function planSegments(tl: Timeline, stage: Stage, actor: Actor, position: THREE.Vector3, yaw: number, segments: Segment[], t0: number, t1: number): void {
+function planSegments(tl: Timeline, actor: Actor, position: THREE.Vector3, yaw: number, segments: Segment[], t0: number, t1: number): void {
   const at = position.clone();
-  const rest = stage.cast.clip(actor.body, actor.design.rest.clip);
-  const layers: PoseLayer[] = [{ clip: rest, time: actor.design.rest.time, weight: 1 }, ...segments.map((s) => ({ clip: s.clip, time: 0, weight: 0 }))];
+  const layers: PoseLayer[] = [...baseLayers(actor), ...segments.map((s) => ({ clip: s.clip, time: 0, weight: 0 }))];
   tl.at(t0, () => {
+    actor.planter.release();
     actor.planter.enabled = true;
   });
   tl.span(t0, t1 - t0, (local, dt) => {
     const t = t0 + local;
     let total = 0;
     segments.forEach((s, i) => {
-      const layer = layers[i + 1];
+      const layer = layers[i + 2];
       if (t < s.start || t > s.end) {
         layer.weight = 0;
         return;
@@ -55,7 +56,7 @@ function planSegments(tl: Timeline, stage: Stage, actor: Actor, position: THREE.
       layer.time = Math.min(Math.max(s.offset + into * s.rate, 0), s.clip.duration);
       total += layer.weight;
     });
-    layers[0].weight = Math.max(0, 1 - total);
+    setBase(layers, Math.max(0, 1 - total), 1);
     actor.root.position.copy(at);
     actor.root.rotation.set(0, yaw, 0);
     actor.animate(layers, dt, false);
@@ -158,14 +159,11 @@ function planStandingStrike({ tl, stage, attacker, spec, strike, A, P, home, fac
 
   let t = 0.16;
   if (A.distanceTo(P) > 0.12) {
-    if (attacker.design.mover === 'glide') {
-      t = planGlide(tl, stage, attacker, A, P, t);
-      t = planTurn(tl, stage, attacker, P, t, home, faceYaw);
-    } else {
-      t = planTravel(tl, stage, attacker, A, P, t, { finalYaw: faceYaw, handOff: true });
-    }
+    t = planTravel(tl, stage, attacker, A, P, t, { finalYaw: faceYaw, handOff: true });
+    // A statue that drifts without turning squares up to its victim once it has landed.
+    if (attacker.design.glide && !attacker.design.glide.turns) t = planTurn(tl, stage, attacker, P, t, home, faceYaw);
   } else {
-    t = planTurn(tl, stage, attacker, P, t, home, faceYaw);
+    t = planTurn(tl, stage, attacker, P, t, home, faceYaw, { rise: true });
   }
   const arrive = t;
   const notice = Math.max(0.1, arrive - 0.45 - turnTime);
@@ -199,7 +197,7 @@ function planStandingStrike({ tl, stage, attacker, spec, strike, A, P, home, fac
     tl.at(start + (spec.draw.until - spec.draw.grab) / speed, () => attacker.drawWeapons(false));
     recovered = start + length;
   }
-  planSegments(tl, stage, attacker, P, faceYaw, segments, arrive, recovered);
+  planSegments(tl, attacker, P, faceYaw, segments, arrive, recovered);
 
   return {
     arrive,
@@ -267,9 +265,8 @@ function planLeapStrike({ tl, stage, attacker, victim, spec, strike, A, P, home,
   const recovered = touchdown + (leap.until - leap.land);
   const clipTime = (time: number): number => (time < launch ? leap.launch - (launch - time) : leap.launch + (time < touchdown ? ((time - launch) / flight) * airClip : airClip + (time - touchdown)));
 
-  const rest = stage.cast.clip(attacker.body, attacker.design.rest.clip);
   const layers: PoseLayer[] = [
-    { clip: rest, time: attacker.design.rest.time, weight: 1 },
+    { clip: attacker.frozen, time: 0, weight: 1 },
     { clip: jump, time: 0, weight: 0 },
   ];
   const turn = angleDelta(home, faceYaw);
@@ -327,8 +324,8 @@ export function planCapture(stage: Stage, event: MoveEvent): Timeline {
   const P = strike.distance >= apart - 0.02 ? A.clone() : standingPoint(stage, attacker, victim, V, direct, strike.distance);
   const faceYaw = yawTowards(P, V) - strike.bearing;
   const victimFace = yawTowards(V, P);
-  const victimTurn = Math.abs(angleDelta(victimHome, victimFace));
-  const turnTime = victimTurn < 0.03 ? 0 : 0.18 + victimTurn / TURN_RATE + 0.3;
+  // How long the victim needs to come round to its attacker (and to stand, if it is crouched).
+  const turnTime = turnDuration(victim, angleDelta(victimHome, victimFace), { rise: true });
 
   // ---------------------------------------------------------------- the attacker
   tl.at(0, () => attacker.wake(1.6, 5.5));
@@ -340,7 +337,7 @@ export function planCapture(stage: Stage, event: MoveEvent): Timeline {
   // ---------------------------------------------------------------- the victim
   // It wakes as the attacker closes, turns to face it and throws up a guard.
   tl.at(plan.notice, () => victim.wake(1.0, 4.5));
-  const faced = planTurn(tl, stage, victim, V, plan.notice, victimHome, victimFace);
+  const faced = planTurn(tl, stage, victim, V, plan.notice, victimHome, victimFace, { rise: true });
   const guard = cast.clip(victim.body, REACT.guard);
   const flinch = cast.clip(victim.body, REACT.flinch);
   const guardStart = Math.max(faced, hitTimes[0] - GUARD_LEAD);
@@ -349,7 +346,7 @@ export function planCapture(stage: Stage, event: MoveEvent): Timeline {
     victimSegments.push({ clip: flinch, start: h, end: h + 0.36, rate: 1, offset: 0, fadeIn: 0.05, fadeOut: 0.16 });
   }
   // The victim's track stops at the final blow: from then on it is rubble.
-  if (finalHit > guardStart) planSegments(tl, stage, victim, V, victimFace, victimSegments, guardStart, finalHit);
+  if (finalHit > guardStart) planSegments(tl, victim, V, victimFace, victimSegments, guardStart, finalHit);
 
   // ---------------------------------------------------------------- the blows land
   const up = new THREE.Vector3(0, 1, 0);
@@ -399,7 +396,7 @@ export function planCapture(stage: Stage, event: MoveEvent): Timeline {
   // A beat to take in the wreckage, then through it.
   const stepOff = recovered + 0.12;
   tl.at(stepOff, () => shatter.setPusher(attacker));
-  let end = planWalk(tl, stage, attacker, P, T, stepOff, { startYaw: faceYaw, finalYaw: home });
+  let end = planStepOn(tl, stage, attacker, P, T, stepOff, faceYaw, home);
   tl.at(end, () => {
     shatter.setPusher(null);
     cast.relocate(attacker, event.to);

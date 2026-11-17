@@ -57,7 +57,7 @@ export class Picker {
       const t = (-B - Math.sqrt(disc)) / (2 * A);
       if (t <= 0 || t >= bestT) continue;
       const y = this.origin.y + this.dir.y * t;
-      if (y < 0 || y > a.height) continue;
+      if (y < 0 || y > a.restHeight) continue;
       bestT = t;
       best = a.square;
     }

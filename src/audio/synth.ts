@@ -28,6 +28,8 @@ interface ToneOptions {
 }
 
 const SILENT = 0.0001;
+/** Levels inside the grind: the low rumble, the gritty band, and how far the grit's level wanders. */
+const GRIND = { body: 0.5, grit: 0.1, wander: 1.6 };
 const rand = (lo: number, hi: number): number => lo + (hi - lo) * Math.random();
 
 export class Synth {
@@ -172,6 +174,70 @@ export class Synth {
     this.tone(v, when, { freq: 84, freqEnd: 36, decay: 0.3, gain: 0.7 });
     this.burst(v, when, { type: 'lowpass', freq: 380, decay: 0.26, gain: 0.34 });
     this.burst(v, when, { type: 'bandpass', freq: 1700, q: 1, decay: 0.05, gain: 0.2 });
+  }
+
+  /**
+   * Stone dragged over stone, for `seconds`: a low rumble with grit in it that catches and
+   * lets go, swelling in and dying away. Returns a handle that cuts it short (a move skipped
+   * or abandoned).
+   */
+  grind(when: number, seconds: number, heft: number, pan = 0, level = 1): { stop(): void } {
+    const { ctx } = this;
+    const v = this.voice(pan, level * (0.55 + 0.45 * heft), 0.28);
+    const out = ctx.createGain();
+    const swell = Math.min(0.45, seconds * 0.35);
+    const fade = Math.min(0.5, seconds * 0.4);
+    out.gain.setValueAtTime(SILENT, when);
+    out.gain.exponentialRampToValueAtTime(1, when + swell);
+    out.gain.setValueAtTime(1, when + Math.max(swell, seconds - fade));
+    out.gain.exponentialRampToValueAtTime(SILENT, when + seconds);
+    out.connect(v);
+    const sources: AudioBufferSourceNode[] = [];
+    const noise = (): AudioBufferSourceNode => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      src.start(when, Math.random() * 1.5);
+      src.stop(when + seconds + 0.1);
+      sources.push(src);
+      return src;
+    };
+    // The weight of it.
+    const body = ctx.createBiquadFilter();
+    body.type = 'lowpass';
+    body.frequency.value = 200;
+    body.Q.value = 0.7;
+    const bodyGain = ctx.createGain();
+    bodyGain.gain.value = GRIND.body;
+    noise().connect(body);
+    body.connect(bodyGain);
+    bodyGain.connect(out);
+    // The grit: a band whose level wanders, so it never sounds like a machine.
+    const grit = ctx.createBiquadFilter();
+    grit.type = 'bandpass';
+    grit.frequency.value = 610;
+    grit.Q.value = 1.1;
+    const gritGain = ctx.createGain();
+    gritGain.gain.value = GRIND.grit;
+    const wander = ctx.createBiquadFilter();
+    wander.type = 'lowpass';
+    wander.frequency.value = 7;
+    const depth = ctx.createGain();
+    depth.gain.value = GRIND.wander;
+    noise().connect(wander);
+    wander.connect(depth);
+    depth.connect(gritGain.gain);
+    noise().connect(grit);
+    grit.connect(gritGain);
+    gritGain.connect(out);
+    return {
+      stop: () => {
+        const t = ctx.currentTime;
+        out.gain.cancelScheduledValues(t);
+        out.gain.setTargetAtTime(SILENT, t, 0.06);
+        for (const src of sources) src.stop(t + 0.4);
+      },
+    };
   }
 
   /** A weapon cutting the air; ends at the blow. */

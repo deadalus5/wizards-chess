@@ -191,7 +191,8 @@ async function boot(): Promise<void> {
     // Motes blur by their distance from whatever the lens is focused on.
     fx.motes.update(now, camera.position.distanceTo(pipeline.focus), pipeline.bokeh, pipeline.focusRange, pipeline.overlayUniforms.uResolution.value.y / (2 * Math.tan((camera.fov * Math.PI) / 360)));
     pipeline.overlayPass.enabled = fx.overlayActive;
-    reflection?.render(pipeline.renderer);
+    // With no renders asked for (a measurement stepping the game by hand), nothing is drawn at all.
+    if (stress.repeat > 0) reflection?.render(pipeline.renderer);
     gpuTimer.begin();
     // Rendering the frame several times finds the real ceiling: at one render per refresh the
     // GPU clocks down, which makes timer queries look far worse than the actual headroom.

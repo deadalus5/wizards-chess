@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import type { BakedClip } from '../anim/bake';
-import { FootPlanter } from '../anim/footPlanter';
+import { FootPlanter, type FootHold } from '../anim/footPlanter';
 import { applyPose, Pose, PoseBlender, poseJoints, sampleClip } from '../anim/pose';
+import { groupMask } from '../anim/sculpt';
 import { homeYaw, squareCentre, type Side } from '../game/squares';
 import type { StoneMaterial } from '../render/stoneMaterial';
 import { instantiatePiece, type PieceInstance, type PieceTemplate } from './buildPiece';
@@ -16,6 +17,22 @@ export interface PoseLayer {
   time: number;
   weight: number;
   mask?: Float32Array | null;
+}
+
+/** The held poses of one piece type, built once by the cast and shared by its statues. */
+export interface StatuePoses {
+  /** The frozen pose. */
+  rest: Pose;
+  /** The frozen pose as a clip that holds still, so it can be layered like any other. */
+  frozen: BakedClip;
+  /** The standing pose a statue rises to before it acts (the frozen clip itself if that is upright). */
+  upright: BakedClip;
+  /** Hands lifted from the sides, for a statue that floats with a flourish. */
+  hands: BakedClip | null;
+  /** Where the frozen pose puts the feet. */
+  stance: [FootHold, FootHold];
+  /** How much lower the head is in the frozen pose than standing, model units. */
+  stoop: number;
 }
 
 interface Mount {
@@ -53,6 +70,23 @@ export class Actor {
   /** Bone masks for layering: legs and pelvis versus everything above. */
   readonly lowerMask: Float32Array;
   readonly upperMask: Float32Array;
+  /** Both arms, and everything but the arms. */
+  readonly armMask: Float32Array;
+  readonly bodyMask: Float32Array;
+  /** The frozen pose this statue holds at rest. */
+  readonly restPose: Pose;
+  /** The frozen pose and the standing pose as layers (one and the same for an upright statue). */
+  readonly frozen: BakedClip;
+  readonly upright: BakedClip;
+  /** Hands lifted from the sides (only a statue that floats with a flourish has this). */
+  readonly hands: BakedClip | null;
+  /** Where the frozen pose puts the feet, for holding them there while the statue is dragged. */
+  readonly stance: readonly [FootHold, FootHold];
+  /**
+   * A last touch to the blended pose before it goes to the bones (aiming a blow, bowing a
+   * head). Set by the choreography while it applies; cleared when the statue freezes.
+   */
+  adjust: ((pose: Pose) => void) | null = null;
   /** Pins planted feet while the statue moves (enabled by the choreography). */
   readonly planter: FootPlanter;
 
@@ -73,9 +107,13 @@ export class Actor {
     readonly design: PieceDesign,
     readonly template: PieceTemplate,
     readonly material: StoneMaterial,
-    /** The frozen pose this statue holds at rest. */
-    readonly restPose: Pose,
+    private readonly poses: StatuePoses,
   ) {
+    this.restPose = poses.rest;
+    this.frozen = poses.frozen;
+    this.upright = poses.upright;
+    this.hands = poses.hands;
+    this.stance = poses.stance;
     this.body = design.body;
     this.instance = instantiatePiece(template, material);
     this.root = this.instance.root;
@@ -89,6 +127,8 @@ export class Actor {
     const lower = /^(root|pelvis|thigh|calf|foot|ball)/;
     this.lowerMask = Float32Array.from(rig.names, (n) => (lower.test(n) ? 1 : 0));
     this.upperMask = Float32Array.from(rig.names, (n) => (lower.test(n) ? 0 : 1));
+    this.armMask = groupMask(rig, 'arms');
+    this.bodyMask = this.armMask.map((w) => 1 - w);
 
     // Height of the ball of the foot in the bind pose, for telling when a foot is on the ground.
     const joints = new Float32Array(rig.names.length * 3);
@@ -97,9 +137,14 @@ export class Actor {
     this.planter = new FootPlanter(this.root, (name) => this.instance.byName.get(name), joints[ball * 3 + 1]);
   }
 
-  /** Height of the figure including its head-piece, in metres. */
+  /** Height of the figure standing, including its head-piece, in metres. */
   get height(): number {
     return (this.template.geometry.boundingBox?.max.y ?? 1.9) * this.design.scale;
+  }
+
+  /** Its height as it stands frozen on its square (lower than `height` for a crouching statue). */
+  get restHeight(): number {
+    return this.height - this.poses.stoop * this.design.scale;
   }
 
   /** Radius of the cylinder used for picking and for keeping the camera clear. */
@@ -155,12 +200,14 @@ export class Actor {
   placeOn(square: string): void {
     this.square = square;
     squareCentre(square, this.root.position);
-    this.root.rotation.y = homeYaw(this.side);
+    // The whole rotation, not only the heading: a move abandoned mid-lean must not leave a tilt.
+    this.root.rotation.set(0, homeYaw(this.side), 0);
     this.rest();
   }
 
   /** Return to the frozen pose. */
   rest(): void {
+    this.adjust = null;
     this.planter.enabled = false;
     this.planter.reset();
     this.pose.copy(this.restPose);
@@ -176,7 +223,7 @@ export class Actor {
     const n = this.pose.boneCount;
     let scratch = scratchByBones.get(n);
     if (!scratch) {
-      scratch = { blender: new PoseBlender(n, this.pelvis), poses: [new Pose(n), new Pose(n), new Pose(n), new Pose(n), new Pose(n), new Pose(n)] };
+      scratch = { blender: new PoseBlender(n, this.pelvis), poses: Array.from({ length: 12 }, () => new Pose(n)) };
       scratchByBones.set(n, scratch);
     }
     const { blender, poses } = scratch;
@@ -189,6 +236,7 @@ export class Actor {
       blender.add(p, layer.weight, layer.mask);
     }
     blender.end(this.pose, this.restPose);
+    this.adjust?.(this.pose);
     applyPose(this.pose, this.instance.bones, this.pelvis);
     this.planter.update(dt, settled);
   }

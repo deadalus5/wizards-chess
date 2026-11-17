@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { solveTwoBone } from './ik';
 
 /**
  * Keeps planted feet planted.
@@ -8,7 +9,26 @@ import * as THREE from 'three';
  * where it touched down and bends the leg to reach it (two-bone IK). When the pose has moved
  * too far from the pinned spot it takes a real step there, lifting the foot. Turning on the
  * spot therefore becomes a shuffle of small steps instead of a frictionless swivel.
+ *
+ * A statue that is dragged rather than walks uses the other mode, `hold`: its feet are held
+ * where its frozen stance puts them relative to the statue itself, soles flat, and never step.
  */
+
+/** Where a statue's frozen stance puts one foot, in the statue's own ground frame at scale 1. */
+export interface FootHold {
+  /** The ball of the foot: x to the statue's left, y above the floor, z ahead. */
+  ball: THREE.Vector3;
+  /** The foot's orientation in the armature's frame. */
+  rotation: THREE.Quaternion;
+}
+
+interface Held {
+  stance: readonly [FootHold, FootHold];
+  /** Where each foot was when the hold began: the same frame, but in metres. */
+  from: { ball: THREE.Vector3; rotation: THREE.Quaternion }[];
+  time: number;
+  ease: number;
+}
 
 interface Foot {
   thigh: THREE.Object3D;
@@ -34,11 +54,12 @@ const K = new THREE.Vector3();
 const A = new THREE.Vector3();
 const B = new THREE.Vector3();
 const T = new THREE.Vector3();
-const dir = new THREE.Vector3();
 const pole = new THREE.Vector3();
-const K2 = new THREE.Vector3();
-const v1 = new THREE.Vector3();
-const v2 = new THREE.Vector3();
+const ahead = new THREE.Vector3();
+const pin = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
+const qYaw = new THREE.Quaternion();
+const qSole = new THREE.Quaternion();
 const qPelvis = new THREE.Quaternion();
 const qThigh = new THREE.Quaternion();
 const qCalf = new THREE.Quaternion();
@@ -48,61 +69,36 @@ const d2 = new THREE.Quaternion();
 const qa = new THREE.Quaternion();
 const qb = new THREE.Quaternion();
 
-/** Analytic two-bone IK: bend thigh and calf so the ankle reaches `target`, keeping the knee's direction and the foot's world orientation. */
-function solveLeg(f: Foot, target: THREE.Vector3): void {
+/**
+ * Bend thigh and calf so the ankle reaches `target`, keeping the knee's direction. The foot
+ * keeps its world orientation, or takes `sole` if one is given.
+ */
+function solveLeg(f: Foot, target: THREE.Vector3, sole?: THREE.Quaternion): void {
   f.thigh.getWorldPosition(H);
   f.calf.getWorldPosition(K);
   f.foot.getWorldPosition(A);
-  const l1 = K.distanceTo(H);
-  const l2 = A.distanceTo(K);
-  if (l1 < 1e-5 || l2 < 1e-5) return;
-  T.copy(target).sub(H);
-  let d = T.length();
-  if (d < 1e-5) return;
-  dir.copy(T).divideScalar(d);
-  // Keep the leg from locking perfectly straight or folding flat.
-  d = Math.min(Math.max(d, Math.abs(l1 - l2) + 0.002), (l1 + l2) * 0.9995);
-
-  // The knee keeps pointing where the animation had it pointing.
-  pole.copy(K).sub(H);
-  pole.addScaledVector(dir, -pole.dot(dir));
-  if (pole.lengthSq() < 1e-8) {
-    // Straight leg: bend forwards relative to the foot.
-    f.foot.getWorldQuaternion(qa);
-    pole.set(0, 0, 1).applyQuaternion(qa);
-    pole.addScaledVector(dir, -pole.dot(dir));
-  }
-  pole.normalize();
-
-  const cosA = Math.min(1, Math.max(-1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d)));
-  const sinA = Math.sqrt(1 - cosA * cosA);
-  K2.copy(H).addScaledVector(dir, cosA * l1).addScaledVector(pole, sinA * l1);
-
   f.thigh.parent!.getWorldQuaternion(qPelvis);
   f.thigh.getWorldQuaternion(qThigh);
   f.calf.getWorldQuaternion(qCalf);
   f.foot.getWorldQuaternion(qFoot);
-
-  // Thigh: swing so the knee lands on K2.
-  v1.copy(K).sub(H).normalize();
-  v2.copy(K2).sub(H).normalize();
-  d1.setFromUnitVectors(v1, v2);
-  // Calf: after the thigh's swing, aim the shin at the target.
-  v1.copy(A).sub(K).normalize().applyQuaternion(d1);
-  v2.copy(H).addScaledVector(dir, d).sub(K2).normalize();
-  d2.setFromUnitVectors(v1, v2);
+  // A perfectly straight leg bends forwards relative to the foot.
+  pole.set(0, 0, 1).applyQuaternion(qFoot);
+  if (!solveTwoBone(H, K, A, target, pole, d1, d2)) return;
 
   // New world rotations, converted back to local.
   qa.copy(d1).multiply(qThigh); // thigh world
   f.thigh.quaternion.copy(qPelvis).invert().multiply(qa);
   qb.copy(d2).multiply(d1).multiply(qCalf); // calf world
   f.calf.quaternion.copy(qa).invert().multiply(qb);
-  f.foot.quaternion.copy(qb).invert().multiply(qFoot); // foot keeps its world orientation
+  f.foot.quaternion.copy(qb).invert().multiply(sole ?? qFoot);
 }
 
 export class FootPlanter {
   enabled = false;
+  /** Steps taken since the last reset (for checking that a slide takes none). */
+  steps = 0;
   private readonly feet: Foot[];
+  private held: Held | null = null;
 
   constructor(
     private readonly root: THREE.Object3D,
@@ -120,12 +116,81 @@ export class FootPlanter {
     });
   }
 
-  /** Forget all pins (call when the statue is frozen or teleported). */
+  /** Forget all pins and any hold (call when the statue is frozen or teleported). */
   reset(): void {
+    this.held = null;
+    this.steps = 0;
     for (const f of this.feet) {
       f.locked = false;
       f.stepping = false;
       f.weight = 0;
+    }
+  }
+
+  /** True while the feet are held to the statue's stance rather than pinned to the floor. */
+  get holding(): boolean {
+    return this.held !== null;
+  }
+
+  /**
+   * Hold the feet where the frozen stance puts them relative to the statue itself: flat on the
+   * floor, sliding and turning with it, never stepping. `ease` seconds are taken to bring them
+   * there from wherever they are now, so nothing jumps.
+   */
+  hold(stance: readonly [FootHold, FootHold], ease = 0.25): void {
+    this.enabled = true;
+    this.root.updateMatrixWorld(true);
+    qYaw.setFromAxisAngle(UP, -this.heading());
+    const from = this.feet.map((f) => {
+      f.locked = false;
+      f.stepping = false;
+      f.weight = 1;
+      const ball = f.ball.getWorldPosition(new THREE.Vector3());
+      ball.x -= this.root.position.x;
+      ball.z -= this.root.position.z;
+      ball.applyQuaternion(qYaw);
+      return { ball, rotation: f.foot.getWorldQuaternion(new THREE.Quaternion()).premultiply(qYaw) };
+    });
+    this.held = { stance, from, time: 0, ease };
+  }
+
+  /** Stop holding: the feet go back to being pinned where they touch down. */
+  release(): void {
+    if (!this.held) return;
+    this.held = null;
+    for (const f of this.feet) {
+      f.locked = false;
+      f.stepping = false;
+    }
+  }
+
+  /** The way the statue faces on the ground, whatever its lean. */
+  private heading(): number {
+    ahead.set(0, 0, 1).transformDirection(this.root.matrixWorld);
+    return Math.atan2(ahead.x, ahead.z);
+  }
+
+  private updateHeld(dt: number): void {
+    const held = this.held!;
+    held.time += dt;
+    const u = held.ease > 0 ? Math.min(1, held.time / held.ease) : 1;
+    const k = u * u * (3 - 2 * u);
+    const scale = this.root.scale.x;
+    qYaw.setFromAxisAngle(UP, this.heading());
+    for (let i = 0; i < 2; i++) {
+      const f = this.feet[i];
+      const want = held.stance[i];
+      const from = held.from[i];
+      // Where the ball of the foot belongs and how the sole sits, in the statue's ground frame.
+      pin.copy(want.ball).multiplyScalar(scale).sub(from.ball).multiplyScalar(k).add(from.ball);
+      pin.applyQuaternion(qYaw);
+      pin.x += this.root.position.x;
+      pin.z += this.root.position.z;
+      qSole.copy(from.rotation).slerp(want.rotation, k).premultiply(qYaw);
+      // The ankle goes wherever puts the ball there with the sole lying as it should.
+      T.copy(f.ball.position).multiplyScalar(scale).applyQuaternion(qSole);
+      T.subVectors(pin, T);
+      solveLeg(f, T, qSole);
     }
   }
 
@@ -137,6 +202,10 @@ export class FootPlanter {
   update(dt: number, settled: boolean): void {
     if (!this.enabled) return;
     this.root.updateMatrixWorld(true);
+    if (this.held) {
+      this.updateHeld(dt);
+      return;
+    }
     const scale = this.root.scale.x;
     const stepAt = (settled ? 0.012 : 0.06) * scale;
     const forceAt = 0.15 * scale;
@@ -166,6 +235,7 @@ export class FootPlanter {
           const drift = Math.hypot(f.pin.x - B.x, f.pin.z - B.z);
           if (drift > stepAt && (!other.stepping || drift > forceAt)) {
             f.stepping = true;
+            this.steps++;
             f.stepFrom.copy(f.pin);
             f.stepTime = 0;
             f.stepDuration = Math.min(0.24, 0.13 + (drift / scale) * 0.5);
