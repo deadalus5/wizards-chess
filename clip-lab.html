@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clip lab</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #14161a; color: #d8d8d8; font: 13px/1.4 ui-monospace, Menlo, monospace; overflow: hidden; }
+      canvas { display: block; width: 100vw; height: 100vh; }
+      #panel { position: fixed; left: 12px; top: 12px; width: 300px; padding: 10px; background: rgba(10, 12, 16, 0.82); border: 1px solid #2c3038; border-radius: 6px; }
+      #panel select, #panel input[type='range'] { width: 100%; }
+      #panel .row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+      #panel button { background: #232730; color: inherit; border: 1px solid #3a3f4a; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+      #info { margin-top: 8px; white-space: pre; color: #9aa3b2; }
+    </style>
+  </head>
+  <body>
+    <div id="panel">
+      <select id="clip"></select>
+      <div class="row"><input id="time" type="range" min="0" max="1" step="0.001" value="0" /></div>
+      <div class="row">
+        <button id="play">pause</button>
+        <label>speed <input id="speed" type="number" value="1" step="0.1" min="0" max="4" style="width: 60px" /></label>
+        <select id="prop" style="width: 110px"></select>
+      </div>
+      <div id="info"></div>
+    </div>
+    <script type="module" src="/src/debug/clipLab.ts"></script>
+  </body>
+</html>

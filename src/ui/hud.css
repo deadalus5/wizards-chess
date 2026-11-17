@@ -1,0 +1,397 @@
+:root {
+  --ink: #e9e2d2;
+  --ink-dim: rgba(233, 226, 210, 0.62);
+  --ink-faint: rgba(233, 226, 210, 0.32);
+  --gold: #e3b866;
+  --panel: rgba(10, 11, 15, 0.62);
+  --panel-edge: rgba(227, 184, 102, 0.22);
+  --ivory: #f1ead9;
+  --obsidian: #20222a;
+  --display: 'Cinzel', 'Trajan Pro', 'Times New Roman', serif;
+  --text: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+}
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  color: var(--ink);
+  font-family: var(--text);
+  font-size: 15px;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: opacity 0.5s ease;
+}
+#hud.cinema .chrome {
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+#hud .chrome {
+  transition: opacity 0.6s ease 0.2s;
+}
+#hud.intro .chrome {
+  opacity: 0;
+  pointer-events: none;
+}
+#hud.intro .chrome button {
+  pointer-events: none;
+}
+
+#title {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+  background: radial-gradient(ellipse at center, rgba(4, 5, 8, 0.2) 0%, rgba(4, 5, 8, 0.78) 100%);
+}
+#title.show {
+  opacity: 1;
+}
+#title h1 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: clamp(40px, 7vw, 104px);
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  color: var(--ink);
+  text-shadow: 0 0 40px rgba(227, 184, 102, 0.28), 0 2px 18px rgba(0, 0, 0, 0.8);
+}
+#title .tag {
+  margin: 18px 0 0;
+  font-size: clamp(14px, 1.3vw, 19px);
+  letter-spacing: 0.12em;
+  color: var(--ink-dim);
+  font-style: italic;
+}
+#title .begin {
+  margin: 56px 0 0;
+  font-family: var(--display);
+  font-size: 12px;
+  letter-spacing: 0.4em;
+  text-indent: 0.4em;
+  color: var(--gold);
+  animation: beckon 2.6s ease-in-out infinite;
+}
+@keyframes beckon {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+#hud button {
+  pointer-events: auto;
+  font: inherit;
+  color: inherit;
+}
+
+.wordmark {
+  position: absolute;
+  left: 28px;
+  top: 22px;
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 15px;
+  letter-spacing: 0.42em;
+  color: var(--ink-dim);
+}
+
+.turn {
+  position: absolute;
+  left: 50%;
+  top: 20px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 22px 9px 18px;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 999px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-family: var(--display);
+  font-size: 13px;
+  letter-spacing: 0.26em;
+  white-space: nowrap;
+}
+.turn .chip {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--panel-edge), 0 0 10px rgba(227, 184, 102, 0.25);
+  transition: background 0.4s ease;
+}
+.turn .chip.w {
+  background: var(--ivory);
+}
+.turn .chip.b {
+  background: var(--obsidian);
+}
+.turn .check {
+  color: #ff8d6b;
+  letter-spacing: 0.3em;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 10px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.moves {
+  position: absolute;
+  right: 22px;
+  top: 76px;
+  width: 196px;
+  max-height: 46vh;
+  padding: 12px 6px 10px 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.moves h3,
+.captured h3 {
+  margin: 0 0 8px;
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: var(--ink-faint);
+}
+.moves ol {
+  margin: 0;
+  padding: 0 8px 0 0;
+  list-style: none;
+  overflow-y: auto;
+  pointer-events: auto;
+  font-variant-numeric: tabular-nums;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-faint) transparent;
+}
+.moves li {
+  display: grid;
+  grid-template-columns: 28px 1fr 1fr;
+  padding: 2px 0;
+  color: var(--ink-dim);
+}
+.moves li .n {
+  color: var(--ink-faint);
+}
+.moves li .last {
+  color: var(--gold);
+}
+.moves li.empty {
+  display: block;
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+.captured {
+  position: absolute;
+  left: 22px;
+  bottom: 22px;
+  padding: 10px 14px;
+  min-width: 150px;
+}
+.captured .row {
+  min-height: 24px;
+  font-size: 21px;
+  line-height: 24px;
+  letter-spacing: 1px;
+}
+.captured .row.w {
+  color: var(--ivory);
+}
+.captured .row.b {
+  color: #8f96a8;
+}
+
+.actions {
+  position: absolute;
+  right: 22px;
+  bottom: 22px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: min(960px, calc(100vw - 250px));
+}
+.actions button {
+  padding: 9px 16px;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, opacity 0.2s ease;
+}
+.actions button:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+.actions button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+/* Toggles: gold when on, faded when off. (The id is needed to outrank "#hud button".) */
+#hud .actions button[aria-pressed='true'] {
+  color: var(--gold);
+  border-color: rgba(227, 184, 102, 0.6);
+}
+#hud .actions button[aria-pressed='false'] {
+  color: var(--ink-faint);
+}
+#hud .actions button[aria-pressed='false']:hover {
+  color: var(--gold);
+}
+
+.hint {
+  position: absolute;
+  left: 50%;
+  top: 68px;
+  transform: translateX(-50%);
+  font-size: 13px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.45s ease, visibility 0.45s;
+}
+.overlay.show {
+  opacity: 1;
+  visibility: visible;
+}
+.overlay.scrim {
+  background: radial-gradient(ellipse at center, rgba(4, 5, 8, 0.25) 0%, rgba(4, 5, 8, 0.72) 100%);
+}
+.overlay .card {
+  pointer-events: auto;
+  padding: 30px 44px 28px;
+  text-align: center;
+}
+.overlay h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 34px;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: var(--ink);
+}
+.overlay p {
+  margin: 10px 0 22px;
+  color: var(--ink-dim);
+  letter-spacing: 0.06em;
+}
+.overlay .choices {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+.overlay .choices button {
+  width: 76px;
+  height: 84px;
+  background: rgba(20, 22, 28, 0.7);
+  border: 1px solid var(--panel-edge);
+  border-radius: 10px;
+  font-size: 40px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.2s ease, color 0.2s ease;
+}
+.overlay .choices button span {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--display);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: var(--ink-faint);
+}
+.overlay .choices button:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+  transform: translateY(-3px);
+}
+.overlay .primary {
+  padding: 11px 26px;
+  background: transparent;
+  border: 1px solid var(--gold);
+  border-radius: 8px;
+  color: var(--gold);
+  font-family: var(--display);
+  font-size: 12px;
+  letter-spacing: 0.26em;
+  cursor: pointer;
+}
+.overlay .primary:hover {
+  background: rgba(227, 184, 102, 0.12);
+}
+
+#loading {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  background: #06070a;
+  color: var(--ink);
+  transition: opacity 0.9s ease;
+  z-index: 10;
+}
+#loading.done {
+  opacity: 0;
+  pointer-events: none;
+}
+#loading h1 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 40px;
+  letter-spacing: 0.5em;
+  text-indent: 0.5em;
+}
+#loading .bar {
+  width: 220px;
+  height: 1px;
+  background: rgba(233, 226, 210, 0.16);
+}
+#loading .bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--gold);
+  transition: width 0.3s ease;
+}
+#loading .what {
+  font-family: var(--text);
+  font-size: 13px;
+  color: var(--ink-faint);
+  letter-spacing: 0.08em;
+}

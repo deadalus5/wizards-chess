@@ -1,0 +1,25 @@
+# dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+coverage/
+
+# asset download cache (public/assets itself is committed)
+.cache/
+*.part
+*.extract/
+
+# local test/debug output
+screenshots/
+.playwright-mcp/
+*.log
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# env
+.env
+.env.*
