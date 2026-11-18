@@ -262,11 +262,17 @@
 }
 
 /* Opponent: who plays which side. */
-.opponent {
+.leftcol {
   position: absolute;
   left: 22px;
   top: 58px;
   width: 236px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.opponent,
+.options {
   padding: 12px 12px 10px 14px;
 }
 .opponent h3 {
@@ -299,7 +305,8 @@
 .opponent[data-mode='auto'] .sides {
   display: none;
 }
-#hud .opponent button {
+#hud .opponent button,
+#hud .options button {
   padding: 3px 0;
   background: none;
   border: none;
@@ -311,11 +318,48 @@
   cursor: pointer;
   transition: color 0.2s ease;
 }
-#hud .opponent button:hover {
+#hud .opponent button:hover,
+#hud .options button:hover {
   color: var(--ink);
 }
-#hud .opponent button[aria-pressed='true'] {
+#hud .opponent button[aria-pressed='true'],
+#hud .options button[aria-pressed='true'] {
   color: var(--gold);
+}
+/* Options: a heading that opens and closes the list of settings. */
+.options {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+#hud .options .head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 0;
+  font-weight: 500;
+  letter-spacing: 0.3em;
+  color: var(--ink-faint);
+}
+#hud .options .head::after {
+  content: '▸';
+  font-size: 10px;
+  letter-spacing: 0;
+  transition: transform 0.2s ease;
+}
+#hud .options.open .head::after {
+  transform: rotate(90deg);
+}
+.options .body {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(227, 184, 102, 0.1);
+}
+.options.open .body {
+  display: flex;
 }
 #hud .opponent .modes button::before {
   content: '';

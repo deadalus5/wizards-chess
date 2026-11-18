@@ -114,7 +114,35 @@ export class Hud {
     this.pauseButton = el('button', undefined, 'PAUSE');
     this.pauseButton.onclick = () => callbacks.onPause(this.pauseButton.dataset.paused !== '1');
     pause.append(this.pauseButton);
-    root.append(this.opponent);
+    // The opponent panel and, under it, the collapsible options share one column on the left.
+    const leftcol = el('div', 'leftcol');
+    const options = el('div', 'options panel chrome');
+    const optionsHead = el('button', 'head', 'OPTIONS');
+    const optionsBody = el('div', 'body');
+    const setOpen = (open: boolean): void => {
+      options.classList.toggle('open', open);
+      optionsHead.setAttribute('aria-expanded', String(open));
+    };
+    let optionsOpen = false;
+    try {
+      optionsOpen = localStorage.getItem('stonewake.options') === '1';
+    } catch {
+      /* storage blocked: start collapsed */
+    }
+    setOpen(optionsOpen);
+    optionsHead.title = 'Show or hide the options';
+    optionsHead.onclick = () => {
+      const open = !options.classList.contains('open');
+      setOpen(open);
+      try {
+        localStorage.setItem('stonewake.options', open ? '1' : '0');
+      } catch {
+        /* the choice lasts until reload */
+      }
+    };
+    options.append(optionsHead, optionsBody);
+    leftcol.append(this.opponent, options);
+    root.append(leftcol);
 
     const moves = el('div', 'moves panel chrome');
     moves.append(el('h3', undefined, 'MOVES'));
@@ -150,7 +178,8 @@ export class Hud {
     this.undoButton.onclick = () => callbacks.onUndo();
     const fresh = el('button', undefined, 'NEW GAME');
     fresh.onclick = () => callbacks.onNewGame();
-    actions.append(sound, cinema, this.followButton, flip, this.undoButton, fresh);
+    optionsBody.append(sound, cinema, this.followButton, flip);
+    actions.append(this.undoButton, fresh);
     root.append(actions);
 
     this.hint = el('div', 'hint chrome', 'Click a statue, then a glowing square.  Drag to orbit, scroll to zoom.  Hold Space to hurry a move along.');

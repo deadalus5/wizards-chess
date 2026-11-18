@@ -566,7 +566,9 @@ and the fracture both read. Run these before and after, and compare:
   - HUD: OPPONENT panel top left (mode; side and level vs computer; level and pause in
     auto-play); the turn bar says "OBSIDIAN IS THINKING" with a pulsing chip during a search.
 - **Interface:** title screen (`Hud.showTitle`), toggles for sound, cinematic captures (off:
-  no cut, no slow motion) and follow-turn, all remembered in localStorage.
+  no cut, no slow motion) and follow-turn, all remembered in localStorage. The toggles and FLIP
+  sit in a collapsible OPTIONS panel under OPPONENT (both in `.leftcol`, top left; open state
+  in `stonewake.options`, collapsed by default); UNDO and NEW GAME stay bottom right.
 - **Warm-up** (`src/core/warmup.ts`): behind the loading screen it rehearses a break in the
   physics engine (its first step with a pile of bodies is slow), places every attack of every
   piece against every victim in the posture it will meet (from the next square exactly, and with
