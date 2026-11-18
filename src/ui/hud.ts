@@ -130,7 +130,7 @@ export class Hud {
     root.id = 'hud';
     this.root = root;
 
-    root.append(el('div', 'wordmark chrome', 'STONEWAKE'));
+    root.append(el('div', 'wordmark chrome', 'WIZARDS CHESS'));
 
     const turn = el('div', 'turn chrome');
     this.chip = el('span', 'chip w');
@@ -535,7 +535,7 @@ export class Hud {
   showTitle(): Promise<void> {
     const title = el('div');
     title.id = 'title';
-    title.append(el('h1', undefined, 'STONEWAKE'), el('p', 'tag', 'Two armies of living stone. One board.'), el('p', 'begin', 'CLICK TO BEGIN'));
+    title.append(el('h1', undefined, 'WIZARDS CHESS'), el('p', 'tag', 'Two armies of living stone. One board.'), el('p', 'begin', 'CLICK TO BEGIN'));
     this.root.classList.add('intro');
     this.root.append(title);
     requestAnimationFrame(() => title.classList.add('show'));
@@ -603,7 +603,7 @@ export class LoadingScreen {
   constructor(parent: HTMLElement) {
     this.root = el('div');
     this.root.id = 'loading';
-    this.root.append(el('h1', undefined, 'STONEWAKE'));
+    this.root.append(el('h1', undefined, 'WIZARDS CHESS'));
     const bar = el('div', 'bar');
     this.bar = el('i');
     bar.append(this.bar);

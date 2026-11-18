@@ -22,7 +22,7 @@ export interface OnlineDeps {
   ready: Promise<void>;
 }
 
-const ALERT_TITLE = '● Your move — Stonewake';
+const ALERT_TITLE = '● Your move — Wizards Chess';
 
 export class Online {
   session: OnlineSession | null = null;
