@@ -9,7 +9,10 @@
     "preview": "vite preview --port 4173 --strictPort",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "assets": "node scripts/fetch-assets.mjs"
+    "assets": "node scripts/fetch-assets.mjs",
+    "relay": "npm --prefix server run dev",
+    "relay:check": "node scripts/relay-check.mjs",
+    "relay:deploy": "npm --prefix server run deploy"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",

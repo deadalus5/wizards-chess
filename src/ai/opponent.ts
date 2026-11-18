@@ -6,9 +6,18 @@ import type { Side } from '../game/squares';
 import type { Hud } from '../ui/hud';
 import { LEVELS, type Engine, type Level, type SearchOptions } from './engine';
 
-export type Mode = 'pass' | 'computer' | 'auto';
+export type Mode = 'pass' | 'computer' | 'auto' | 'online';
 
+/** The modes kept in localStorage (online is chosen by the link in the address, never stored). */
 const MODES: Mode[] = ['pass', 'computer', 'auto'];
+
+/** An online game, as far as who may click is concerned (src/net/session.ts). */
+export interface OnlineSeat {
+  /** The side this browser plays, once the relay has said. */
+  readonly side: Side | null;
+  /** Whether this player may move now (connected, in step with the relay, game not over). */
+  readonly canMove: boolean;
+}
 const LEVEL_NAMES = Object.keys(LEVELS) as Level[];
 
 /**
@@ -17,7 +26,7 @@ const LEVEL_NAMES = Object.keys(LEVELS) as Level[];
  * (thinking) only your move. Otherwise one move.
  */
 export function undoPlies(mode: Mode, humanSide: Side, turn: Side, played: number): number {
-  if (played <= 0) return 0;
+  if (played <= 0 || mode === 'online') return 0;
   if (mode !== 'computer') return 1;
   if (turn !== humanSide) return 1;
   // Your turn: the computer's reply and your move. If the computer's opening move is all there
@@ -85,6 +94,11 @@ export class Opponent {
   private ended = -1;
   /** Off until `apply()`: nothing moves while the game is still loading. */
   private live = false;
+  /** The online game being played, if any. */
+  private online: OnlineSeat | null = null;
+  /** The mode to go back to when leaving an online game. */
+  private offlineMode: Mode = 'pass';
+  private onlineSeat: Side | null = null;
 
   constructor(private readonly d: OpponentDeps) {
     this.mode = stored(KEY.mode, MODES, 'pass');
@@ -112,6 +126,12 @@ export class Opponent {
   apply(): void {
     const { controller, hud } = this.d;
     this.live = true;
+    if (this.mode === 'online') {
+      this.onlineSeat = null;
+      this.syncOnline();
+      hud.setOpponent({ mode: this.mode, side: this.humanSide, level: this.level, paused: false });
+      return;
+    }
     const engine = this.engineSides();
     controller.inputSides = new Set((['w', 'b'] as Side[]).filter((s) => !engine.includes(s)));
     controller.seat = this.mode === 'computer' ? this.humanSide : null;
@@ -124,7 +144,47 @@ export class Opponent {
     this.poke();
   }
 
+  /** Play an online game: input and the camera follow the session from now on. */
+  enterOnline(seat: OnlineSeat): void {
+    this.cancel();
+    if (this.mode !== 'online') this.offlineMode = this.mode;
+    this.online = seat;
+    this.mode = 'online';
+    this.paused = false;
+    this.apply();
+  }
+
+  /** Back to the mode played before the online game (or `mode`), with a fresh board. */
+  leaveOnline(mode?: Mode): void {
+    if (this.mode !== 'online') return;
+    this.online = null;
+    this.onlineSeat = null;
+    this.mode = mode && mode !== 'online' ? mode : this.offlineMode;
+    save(KEY.mode, this.mode);
+    this.apply();
+    this.newGame();
+  }
+
+  /** Online: open clicks to this player's side when they may move, and keep the camera at their seat. */
+  syncOnline(): void {
+    const { controller } = this.d;
+    if (this.mode !== 'online' || !this.online) return;
+    const side = this.online.side;
+    controller.inputSides = new Set(side && this.online.canMove ? [side] : []);
+    controller.inputChanged();
+    if (side !== this.onlineSeat) {
+      // Only when the seat changes (joining, a rematch): otherwise leave a dragged camera be.
+      // On joining, be there at once: a missed move may be about to play.
+      const joining = this.onlineSeat === null;
+      this.onlineSeat = side;
+      controller.seat = side;
+      controller.reseat(joining);
+    }
+  }
+
   setMode(mode: Mode, paused = false): void {
+    if (mode === 'online') return;
+    if (this.mode === 'online') return this.leaveOnline(mode);
     if (mode === this.mode && paused === this.paused) return;
     this.cancel();
     this.mode = mode;
@@ -157,6 +217,8 @@ export class Opponent {
   }
 
   newGame(fen?: string): void {
+    // An online game has no new game: there is rematch once it is over.
+    if (this.mode === 'online') return;
     this.cancel();
     this.ended = -1;
     if (this.mode !== 'pass' && this.d.engine.loaded) void this.d.engine.newGame().catch((err) => this.fail(err));
@@ -191,7 +253,7 @@ export class Opponent {
     const { controller, game, engine } = this.d;
     // Whatever was outstanding belonged to an earlier position.
     this.cancel();
-    if (this.mode === 'pass' || !this.live) return;
+    if (this.mode === 'pass' || this.mode === 'online' || !this.live) return;
     const status = game.status();
     if (status.over) return this.gameOver(status.checkmate ? `${status.turn === 'w' ? 'black' : 'white'} mates` : `draw: ${status.draw}`);
     if (this.mode === 'auto' && game.history().length >= this.maxPlies) return this.gameOver(`stopped after ${this.maxPlies} moves`, true);

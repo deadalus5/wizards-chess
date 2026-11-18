@@ -14,9 +14,37 @@ export interface HudCallbacks {
   onSide(side: Side): void;
   onLevel(level: OpponentLevel): void;
   onPause(paused: boolean): void;
+  /** Online: create a game playing this side. */
+  onOnlineCreate(side: Side | 'random'): void;
+  /** Online: open one of this browser's games (by id). */
+  onOnlineOpen(id: string): void;
+  onOnlineLeave(): void;
+  onResign(): void;
+  onRematch(): void;
 }
 
-export type OpponentMode = 'pass' | 'computer' | 'auto';
+export type OpponentMode = 'pass' | 'computer' | 'auto' | 'online';
+
+/** What the interface shows of online play. */
+export interface OnlineView {
+  /** False when no relay is configured: the ONLINE choice is not offered. */
+  available: boolean;
+  /** The ONLINE choice is open (a game or the lobby is shown in the panel). */
+  open: boolean;
+  /** A game being created (the CREATE button waits). */
+  creating: boolean;
+  game: null | {
+    side: Side | null;
+    connection: 'connecting' | 'live' | 'reconnecting' | 'gone';
+    opponentOnline: boolean;
+    myLink: string;
+    inviteLink: string | null;
+    over: boolean;
+    rematch: { mine: boolean; theirs: boolean };
+  };
+  /** This browser's other online games, most recent first. */
+  games: { id: string; side: Side; status: string; plies: number; current: boolean }[];
+}
 export type OpponentLevel = 'easy' | 'medium' | 'hard' | 'max';
 export interface OpponentView {
   mode: OpponentMode;
@@ -65,6 +93,33 @@ export class Hud {
   private readonly sideButtons = new Map<Side, HTMLButtonElement>();
   private readonly levelButtons = new Map<OpponentLevel, HTMLButtonElement>();
   private readonly pauseButton: HTMLButtonElement;
+  private readonly onlineButton: HTMLButtonElement;
+  private readonly onlineLobby: HTMLElement;
+  private readonly onlineGame: HTMLElement;
+  private readonly onlineSide: HTMLElement;
+  private readonly onlineStatus: HTMLElement;
+  private readonly inviteButton: HTMLButtonElement;
+  private readonly myLinkButton: HTMLButtonElement;
+  private readonly createButton: HTMLButtonElement;
+  private readonly createSides = new Map<Side | 'random', HTMLButtonElement>();
+  private readonly gamesList: HTMLElement;
+  private readonly gamesBox: HTMLElement;
+  private readonly againButton: HTMLButtonElement;
+  private readonly rematchButton: HTMLButtonElement;
+  private readonly rematchNote: HTMLElement;
+  private readonly share: HTMLElement;
+  private readonly shareText: HTMLElement;
+  private readonly shareInvite: HTMLInputElement;
+  private readonly shareMine: HTMLInputElement;
+  private readonly confirmBox: HTMLElement;
+  private readonly confirmTitle: HTMLElement;
+  private readonly confirmText: HTMLElement;
+  private readonly confirmYes: HTMLButtonElement;
+  private readonly confirmNo: HTMLButtonElement;
+  private createSide: Side | 'random' = 'w';
+  private lastOpponent: OpponentView = { mode: 'pass', side: 'w', level: 'medium', paused: false };
+  private online: OnlineView = { available: false, open: false, creating: false, game: null, games: [] };
+  private onlineCallbacks: HudCallbacks | null = null;
   private turnSide: Side = 'w';
   private turnCheck = false;
   private thinking: Side | null = null;
@@ -114,6 +169,47 @@ export class Hud {
     this.pauseButton = el('button', undefined, 'PAUSE');
     this.pauseButton.onclick = () => callbacks.onPause(this.pauseButton.dataset.paused !== '1');
     pause.append(this.pauseButton);
+
+    // Online: two players, two links, no accounts.
+    choice(modes, this.modeButtons, 'online', 'ONLINE', 'Play someone on another computer: share a link', callbacks.onMode);
+    this.onlineButton = this.modeButtons.get('online')!;
+    const online = group('online');
+    this.onlineLobby = el('div', 'lobby');
+    const playAs = el('div', 'playas');
+    playAs.append(el('span', 'label', 'PLAY AS'));
+    for (const [v, name] of [['w', 'IVORY'], ['b', 'OBSIDIAN'], ['random', 'RANDOM']] as [Side | 'random', string][]) {
+      const b = el('button', undefined, name);
+      b.title = v === 'random' ? 'Draw lots for the colours' : `You play ${name.toLowerCase()}`;
+      b.onclick = () => {
+        this.createSide = v;
+        this.renderOnline();
+      };
+      this.createSides.set(v, b);
+      playAs.append(b);
+    }
+    this.createButton = el('button', 'go', 'CREATE ONLINE GAME');
+    this.createButton.title = 'Make a game and a link to send to your opponent';
+    this.createButton.onclick = () => callbacks.onOnlineCreate(this.createSide);
+    this.onlineLobby.append(playAs, this.createButton);
+    this.onlineGame = el('div', 'ingame');
+    this.onlineSide = el('div', 'who');
+    this.onlineStatus = el('div', 'status');
+    this.inviteButton = el('button', undefined, 'COPY INVITE LINK');
+    this.inviteButton.title = 'The link to send your opponent';
+    this.inviteButton.onclick = () => this.copy(this.online.game?.inviteLink ?? '', this.inviteButton);
+    this.myLinkButton = el('button', undefined, 'COPY MY LINK');
+    this.myLinkButton.title = 'Your own link: open it on any device to play your side';
+    this.myLinkButton.onclick = () => this.copy(this.online.game?.myLink ?? '', this.myLinkButton);
+    const leave = el('button', undefined, 'LEAVE GAME');
+    leave.title = 'Back to this computer. The game waits on its links; come back any time.';
+    leave.onclick = () => callbacks.onOnlineLeave();
+    this.onlineGame.append(this.onlineSide, this.onlineStatus, this.inviteButton, this.myLinkButton, leave);
+    this.gamesBox = el('div', 'mine');
+    this.gamesBox.append(el('span', 'label', 'MY GAMES'));
+    this.gamesList = el('div', 'list');
+    this.gamesBox.append(this.gamesList);
+    online.append(this.onlineLobby, this.onlineGame, this.gamesBox);
+    this.onlineCallbacks = callbacks;
     // The opponent panel and, under it, the collapsible options share one column on the left.
     const leftcol = el('div', 'leftcol');
     const options = el('div', 'options panel chrome');
@@ -171,15 +267,19 @@ export class Hud {
     const sound = toggle('SOUND', 'Sound on or off', settings.sound, callbacks.onToggleSound);
     const cinema = toggle('CINEMATIC', 'Cut to a close shot and slow the killing blow (off: captures play from your seat)', settings.cinema, callbacks.onToggleCinema);
     this.followButton = toggle('FOLLOW TURN', 'Swing the camera round to the side to move', settings.follow, callbacks.onToggleFollow);
-    const flip = el('button', undefined, 'FLIP');
+    this.followButton.classList.add('follow');
+    const flip = el('button', 'flip', 'FLIP');
     flip.title = 'Look from the other side';
     flip.onclick = () => callbacks.onFlip();
-    this.undoButton = el('button', undefined, 'UNDO');
+    this.undoButton = el('button', 'undo', 'UNDO');
     this.undoButton.onclick = () => callbacks.onUndo();
-    const fresh = el('button', undefined, 'NEW GAME');
+    const fresh = el('button', 'newgame', 'NEW GAME');
     fresh.onclick = () => callbacks.onNewGame();
+    const resign = el('button', 'resign', 'RESIGN');
+    resign.title = 'Give up this online game';
+    resign.onclick = () => callbacks.onResign();
     optionsBody.append(sound, cinema, this.followButton, flip);
-    actions.append(this.undoButton, fresh);
+    actions.append(this.undoButton, fresh, resign);
     root.append(actions);
 
     this.hint = el('div', 'hint chrome', 'Click a statue, then a glowing square.  Drag to orbit, scroll to zoom.  Hold Space to hurry a move along.');
@@ -199,11 +299,51 @@ export class Hud {
     const overCard = el('div', 'card panel');
     this.gameOverTitle = el('h2');
     this.gameOverText = el('p');
-    const again = el('button', 'primary', 'NEW GAME');
-    again.onclick = () => callbacks.onNewGame();
-    overCard.append(this.gameOverTitle, this.gameOverText, again);
+    this.againButton = el('button', 'primary again', 'NEW GAME');
+    this.againButton.onclick = () => callbacks.onNewGame();
+    this.rematchNote = el('p', 'note');
+    this.rematchButton = el('button', 'primary rematch', 'REMATCH');
+    this.rematchButton.title = 'Play again on the same links, colours swapped';
+    this.rematchButton.onclick = () => callbacks.onRematch();
+    const look = el('button', 'secondary', 'VIEW THE BOARD');
+    look.onclick = () => this.gameOver.classList.remove('show');
+    overCard.append(this.gameOverTitle, this.gameOverText, this.rematchNote, this.againButton, this.rematchButton, look);
     this.gameOver.append(overCard);
     root.append(this.gameOver);
+
+    // After creating an online game: the links.
+    this.share = el('div', 'overlay scrim share');
+    const shareCard = el('div', 'card panel');
+    this.shareText = el('p');
+    this.shareInvite = el('input');
+    this.shareMine = el('input');
+    const linkRow = (label: string, input: HTMLInputElement): HTMLElement => {
+      const row = el('div', 'linkrow');
+      input.readOnly = true;
+      input.onfocus = () => input.select();
+      const b = el('button', 'secondary', 'COPY');
+      b.onclick = () => this.copy(input.value, b, input);
+      row.append(el('span', 'label', label), input, b);
+      return row;
+    };
+    const shareDone = el('button', 'primary', 'TO THE BOARD');
+    shareDone.onclick = () => this.share.classList.remove('show');
+    shareCard.append(el('h2', undefined, 'THE BOARD IS SET'), this.shareText, linkRow('SEND TO YOUR OPPONENT', this.shareInvite), linkRow('YOUR OWN LINK — KEEP IT', this.shareMine), shareDone);
+    this.share.append(shareCard);
+    root.append(this.share);
+
+    // A yes / no question (resigning).
+    this.confirmBox = el('div', 'overlay scrim confirm');
+    const confirmCard = el('div', 'card panel');
+    this.confirmTitle = el('h2');
+    this.confirmText = el('p');
+    this.confirmYes = el('button', 'primary');
+    this.confirmNo = el('button', 'secondary');
+    const confirmRow = el('div', 'buttons');
+    confirmRow.append(this.confirmYes, this.confirmNo);
+    confirmCard.append(this.confirmTitle, this.confirmText, confirmRow);
+    this.confirmBox.append(confirmCard);
+    root.append(this.confirmBox);
 
     parent.append(root);
     this.setMoves([]);
@@ -232,14 +372,119 @@ export class Hud {
   }
 
   private renderTurn(): void {
+    const game = this.online.game;
+    if (game && game.side) {
+      // Online: whose move it is from this player's chair, or that the line is down.
+      const mine = this.turnSide === game.side;
+      const down = game.connection !== 'live';
+      this.chip.className = `chip ${this.turnSide}${!mine || down ? ' thinking' : ''}`;
+      if (!this.flashTimer) {
+        this.turnText.textContent = down ? 'RECONNECTING…' : game.over ? 'THE GAME IS OVER' : mine ? 'YOUR MOVE' : `WAITING FOR ${SIDE_NAME[this.turnSide].toUpperCase()}`;
+      }
+      this.checkText.textContent = this.turnCheck && !game.over ? 'CHECK' : '';
+      return;
+    }
     const side = this.thinking ?? this.turnSide;
     this.chip.className = `chip ${side}${this.thinking ? ' thinking' : ''}`;
     if (!this.flashTimer) this.turnText.textContent = `${SIDE_NAME[side].toUpperCase()} ${this.thinking ? 'IS THINKING' : 'TO MOVE'}`;
     this.checkText.textContent = this.turnCheck ? 'CHECK' : '';
   }
 
+  /** Show online play as it stands (the panel, the turn bar, the buttons that change online). */
+  setOnline(v: OnlineView): void {
+    this.online = v;
+    this.renderOnline();
+    this.renderTurn();
+  }
+
+  private renderOnline(): void {
+    const v = this.online;
+    const g = v.game;
+    this.onlineButton.hidden = !v.available;
+    this.root.classList.toggle('online-game', !!g);
+    this.root.classList.toggle('online-over', !!g?.over);
+    this.opponent.dataset.mode = v.open || g ? 'online' : this.lastOpponent.mode;
+    for (const [m, b] of this.modeButtons) b.setAttribute('aria-pressed', String(v.open || g ? m === 'online' : m === this.lastOpponent.mode));
+    this.onlineLobby.hidden = !!g;
+    this.onlineGame.hidden = !g;
+    for (const [side, b] of this.createSides) b.setAttribute('aria-pressed', String(side === this.createSide));
+    this.createButton.disabled = v.creating;
+    this.createButton.textContent = v.creating ? 'CREATING…' : 'CREATE ONLINE GAME';
+    if (g) {
+      this.onlineSide.textContent = g.side ? `YOU PLAY ${SIDE_NAME[g.side].toUpperCase()}` : 'JOINING…';
+      this.onlineSide.className = `who ${g.side ?? ''}`;
+      this.onlineStatus.textContent =
+        g.connection === 'live' ? (g.opponentOnline ? 'Your opponent is here.' : 'Your opponent is away.') : g.connection === 'gone' ? 'This game is closed.' : g.connection === 'connecting' ? 'Reaching the hall…' : 'Connection lost. Reconnecting…';
+      this.onlineStatus.classList.toggle('here', g.connection === 'live' && g.opponentOnline);
+      this.inviteButton.hidden = !g.inviteLink;
+    }
+    // Rematch in the game-over card.
+    const rm = g?.rematch;
+    this.rematchButton.disabled = !!rm?.mine;
+    this.rematchButton.textContent = rm?.theirs && !rm.mine ? 'ACCEPT REMATCH' : 'REMATCH';
+    const opp = g?.side ? SIDE_NAME[g.side === 'w' ? 'b' : 'w'] : 'Your opponent';
+    this.rematchNote.textContent = !g ? '' : rm?.mine ? `Waiting for ${opp} to accept…` : rm?.theirs ? `${opp} asks for a rematch, colours swapped.` : 'A rematch swaps the colours; the links stay the same.';
+    // This browser's games.
+    const others = v.games;
+    this.gamesBox.hidden = others.length === 0;
+    this.gamesList.replaceChildren();
+    for (const game of others.slice(0, 8)) {
+      const b = el('button', game.current ? 'current' : undefined);
+      b.append(el('i', `dot ${game.side}`), el('span', undefined, `${game.status}`), el('span', 'n', game.plies ? ` · move ${Math.ceil(game.plies / 2)}` : ''));
+      b.title = game.current ? 'The game on the board' : `Open this game (you play ${SIDE_NAME[game.side]})`;
+      b.onclick = () => this.onlineCallbacks?.onOnlineOpen(game.id);
+      this.gamesList.append(b);
+    }
+  }
+
+  /** After creating an online game: show both links. */
+  showShare(inviteLink: string, myLink: string, mySide: Side): void {
+    this.shareText.textContent = `Send the first link to your opponent; whoever opens it plays ${SIDE_NAME[mySide === 'w' ? 'b' : 'w']}. You play ${SIDE_NAME[mySide]}: your own link is in the address bar — bookmark it, or keep the second link, to come back to this game on any device.`;
+    this.shareInvite.value = inviteLink;
+    this.shareMine.value = myLink;
+    this.share.classList.add('show');
+  }
+
+  /** A yes / no question in a card over the board. */
+  confirm(title: string, text: string, yes: string, no: string): Promise<boolean> {
+    this.confirmTitle.textContent = title;
+    this.confirmText.textContent = text;
+    this.confirmYes.textContent = yes;
+    this.confirmNo.textContent = no;
+    this.confirmBox.classList.add('show');
+    return new Promise((resolve) => {
+      const done = (answer: boolean): void => {
+        this.confirmBox.classList.remove('show');
+        resolve(answer);
+      };
+      this.confirmYes.onclick = () => done(true);
+      this.confirmNo.onclick = () => done(false);
+    });
+  }
+
+  /** Copy text to the clipboard, saying so on the button; or offer it to copy by hand. */
+  private copy(text: string, button: HTMLButtonElement, input?: HTMLInputElement): void {
+    if (!text) return;
+    const label = button.dataset.label ?? button.textContent ?? '';
+    button.dataset.label = label;
+    const said = (what: string): void => {
+      button.textContent = what;
+      setTimeout(() => (button.textContent = label), 1600);
+    };
+    const byHand = (): void => {
+      if (input) {
+        input.focus();
+        input.select();
+        said('PRESS ⌘C');
+      } else prompt('Copy this link:', text);
+    };
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => said('COPIED'), byHand);
+    else byHand();
+  }
+
   /** Show the opponent choices as they stand. */
   setOpponent(v: OpponentView): void {
+    this.lastOpponent = v;
     for (const [m, b] of this.modeButtons) b.setAttribute('aria-pressed', String(m === v.mode));
     for (const [s, b] of this.sideButtons) b.setAttribute('aria-pressed', String(s === v.side));
     for (const [l, b] of this.levelButtons) b.setAttribute('aria-pressed', String(l === v.level));
@@ -247,6 +492,7 @@ export class Hud {
     this.pauseButton.dataset.paused = v.paused ? '1' : '0';
     this.pauseButton.textContent = v.paused ? 'RESUME' : 'PAUSE';
     this.pauseButton.setAttribute('aria-pressed', String(!v.paused));
+    this.renderOnline();
   }
 
   setMoves(san: readonly string[]): void {

@@ -9,6 +9,10 @@
 //   node scripts/browser.mjs click <x> <y>
 //   node scripts/browser.mjs key <Key>
 //   node scripts/browser.mjs console            print console errors/warnings seen since the last call
+//   node scripts/browser.mjs place <x> <y> <w> <h>   move and size the window (outer, screen points)
+//
+// A second test browser (another profile, so its own localStorage: a second player online) is
+// driven the same way with CDP_URL=http://localhost:9334.
 //
 // `eval` wraps the code in an async function; use `return` to get a value back (printed as JSON).
 
@@ -89,13 +93,23 @@ try {
       console.log(JSON.stringify(await page.evaluate(() => ({ w: innerWidth, h: innerHeight }))));
       break;
     }
+    case 'place': {
+      // Put the window at x y (screen points) with outer size w h: two test browsers side by side.
+      const session = await context.newCDPSession(page);
+      const { windowId } = await session.send('Browser.getWindowForTarget');
+      const [left, top, width, height] = args.map(Number);
+      await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal', left, top, width, height } });
+      await page.waitForTimeout(250);
+      console.log(JSON.stringify(await page.evaluate(() => ({ x: screenX, y: screenY, w: innerWidth, h: innerHeight }))));
+      break;
+    }
     case 'console': {
       const logs = await page.evaluate(() => (window.__consoleLog ?? []).splice(0));
       console.log(logs.length ? logs.join('\n') : '(no console output captured)');
       break;
     }
     default:
-      console.error('usage: browser.mjs goto|shot|eval|click|move|key|resize|console ...');
+      console.error('usage: browser.mjs goto|shot|eval|click|move|key|resize|place|console ...');
       process.exitCode = 1;
   }
 } catch (err) {

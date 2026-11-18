@@ -39,18 +39,33 @@ export interface GameStatus {
   over: boolean;
   /** Square of the king that is in check, if any. */
   checkedKing: Square | null;
+  /** The side that resigned (online games), if one did. */
+  resigned: Color | null;
 }
 
 /** Thin wrapper over chess.js: the single source of truth for the rules. */
 export class ChessGame {
   private chess = new Chess();
+  private resignedBy: Color | null = null;
 
   reset(): void {
     this.chess.reset();
+    this.resignedBy = null;
   }
 
   load(fen: string): void {
     this.chess.load(fen);
+    this.resignedBy = null;
+  }
+
+  /** End the game by resignation (online play); cleared by reset, load and undo. */
+  resign(side: Color): void {
+    this.resignedBy = side;
+  }
+
+  /** The moves so far in coordinate notation (`e2e4`, `e7e8q`). */
+  historyUci(): string[] {
+    return this.chess.history({ verbose: true }).map((m) => m.from + m.to + (m.promotion ?? ''));
   }
 
   fen(): string {
@@ -90,7 +105,7 @@ export class ChessGame {
     const check = c.isCheck();
     let checkedKing: Square | null = null;
     if (check) checkedKing = c.findPiece({ type: 'k', color: turn })[0] ?? null;
-    return { turn, check, checkmate: c.isCheckmate(), draw: this.drawReason(), over: c.isGameOver(), checkedKing };
+    return { turn, check, checkmate: c.isCheckmate(), draw: this.drawReason(), over: c.isGameOver() || this.resignedBy !== null, checkedKing, resigned: this.resignedBy };
   }
 
   private drawReason(): DrawReason | null {
@@ -121,7 +136,13 @@ export class ChessGame {
 
   /** Take back the last move; returns it, or null at the start of the game. */
   undo(): Move | null {
+    this.resignedBy = null;
     return this.chess.undo();
+  }
+
+  /** `e2e4` / `e7e8q` for a move event. */
+  static uciOf(e: Pick<MoveEvent, 'from' | 'to' | 'promotion'>): string {
+    return e.from + e.to + (e.promotion ?? '');
   }
 
   private describe(m: Move): MoveEvent {

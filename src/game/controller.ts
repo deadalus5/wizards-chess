@@ -45,6 +45,7 @@ export class GameController {
   private busy = false;
   private readonly events: MoveEvent[] = [];
   private readonly settled: (() => void)[] = [];
+  private readonly moved: ((event: MoveEvent, ply: number) => void)[] = [];
   private gen = 0;
   followTurn: boolean;
   /** Sides whose moves are made by clicking (the computer's side is left out). */
@@ -78,12 +79,22 @@ export class GameController {
   }
 
   /** Called whenever the board comes to rest: after a new game, an undo, or a move has played out. */
-  onSettled(listener: () => void): void {
+  onSettled(listener: () => void): () => void {
     this.settled.push(listener);
+    return () => this.settled.splice(this.settled.indexOf(listener) >>> 0, 1);
+  }
+
+  /**
+   * Called as each move is made, before it plays out on the board: by a click, the computer or
+   * an online opponent alike. `ply` is the move's index from the start of the game.
+   */
+  onMove(listener: (event: MoveEvent, ply: number) => void): () => void {
+    this.moved.push(listener);
+    return () => this.moved.splice(this.moved.indexOf(listener) >>> 0, 1);
   }
 
   private notifySettled(): void {
-    for (const l of this.settled) l();
+    for (const l of [...this.settled]) l();
   }
 
   /** Swing to the side to move, or to the human's seat when playing the computer. */
@@ -175,6 +186,8 @@ export class GameController {
     const event = game.play(from, to, promotion);
     this.gen++;
     this.events.push(event);
+    const ply = game.history().length - 1;
+    for (const l of [...this.moved]) l(event, ply);
     this.busy = true;
     hud.setBusy(true);
     this.d.markers.clear();
@@ -211,6 +224,45 @@ export class GameController {
     return this.move(move.from, move.to, move.promotion);
   }
 
+  /**
+   * Set up the position after `moves` (coordinate notation) from the start, at once, with no
+   * move played out: an online game being joined or put right. Throws if a move is illegal,
+   * leaving the opening position.
+   */
+  loadMoves(moves: readonly string[]): void {
+    const { game, cast, hud } = this.d;
+    this.gen++;
+    game.reset();
+    this.events.length = 0;
+    try {
+      for (const uci of moves) {
+        const m = game.legalUci(uci);
+        if (!m) throw new Error(`illegal move ${uci} at ply ${this.events.length}`);
+        this.events.push(game.play(m.from, m.to, m.promotion));
+      }
+    } catch (err) {
+      game.reset();
+      this.events.length = 0;
+      throw err;
+    } finally {
+      this.select(null);
+      this.d.presenter.reset?.();
+      cast.setPosition(game.board() as BoardArray);
+      hud.hideGameOver();
+      this.refresh();
+      this.seatCamera();
+      this.notifySettled();
+    }
+  }
+
+  /** `side` resigns (online play): the game is over and the result shown. */
+  resign(side: Side): void {
+    if (this.d.game.status().resigned) return;
+    this.d.game.resign(side);
+    this.select(null);
+    this.refresh();
+  }
+
   /** Take back up to `plies` moves (ignored while a move is playing). Returns how many were taken back. */
   async undo(plies = 1): Promise<number> {
     const { game, cast } = this.d;
@@ -238,9 +290,9 @@ export class GameController {
     if (on && !this.seat) this.d.rig.viewFor(this.d.game.turn());
   }
 
-  /** Re-apply the camera rule (after the seat changes). */
-  reseat(): void {
-    if (!this.busy) this.seatCamera();
+  /** Re-apply the camera rule (after the seat changes); `instant` jumps rather than swings. */
+  reseat(instant = false): void {
+    if (!this.busy) this.seatCamera(instant);
   }
 
   /** Re-check hover markers and selection after the sides open to input change. */
@@ -273,7 +325,10 @@ export class GameController {
     }
     if (status.checkedKing) markers.add('check', status.checkedKing, CHECK_COLOR, 2.4);
 
-    if (status.checkmate) {
+    if (status.resigned) {
+      const winner = status.resigned === 'w' ? 'b' : 'w';
+      hud.showGameOver('RESIGNATION', `${Hud.sideName(status.resigned as Side)} lays down arms. ${Hud.sideName(winner)} takes the board.`);
+    } else if (status.checkmate) {
       const winner = status.turn === 'w' ? 'b' : 'w';
       hud.showGameOver('CHECKMATE', `${Hud.sideName(winner)} takes the board.`);
     } else if (status.draw) {

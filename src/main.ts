@@ -13,6 +13,7 @@ import { Cinema } from './cinema/cinema';
 import { FrameLoop } from './core/loop';
 import { warmUp } from './core/warmup';
 import { installDebugApi } from './debug/api';
+import { Online } from './net/online';
 import { GpuTimer, PerfRecorder } from './debug/perf';
 import { Effects } from './fx/effects';
 import { Physics } from './fx/physics';
@@ -118,6 +119,7 @@ async function boot(): Promise<void> {
   let director!: Director;
   let cinema!: Cinema;
   let opponent!: Opponent;
+  let online!: Online;
   const setCinematic = (on: boolean): void => {
     cinema.enabled = on;
     director.slowMotionEnabled = on;
@@ -132,10 +134,15 @@ async function boot(): Promise<void> {
       onToggleFollow: (on) => controller.setFollow(on),
       onToggleSound: (on) => audio.setEnabled(on),
       onToggleCinema: setCinematic,
-      onMode: (mode) => opponent.setMode(mode),
+      onMode: (mode) => online.chooseMode(mode),
       onSide: (side) => opponent.setSide(side),
       onLevel: (level) => opponent.setLevel(level),
       onPause: (paused) => opponent.setPaused(paused),
+      onOnlineCreate: (side) => void online.create(side),
+      onOnlineOpen: (id) => online.openGame(id),
+      onOnlineLeave: () => online.leaveGame(),
+      onResign: () => void online.resign(),
+      onRematch: () => online.rematch(),
     },
     { follow: localStorage.getItem('stonewake.follow') !== '0', sound: audio.on, cinema: cinematic },
   );
@@ -177,6 +184,10 @@ async function boot(): Promise<void> {
   // The computer: Stockfish in a worker, loaded only once a mode needs it.
   const engine = new Engine();
   opponent = new Opponent({ controller, game, engine, hud, speed: () => director.baseSpeed });
+  // Online play: two browsers, one relay (src/net, server/). Moves wait for the title to go.
+  let titleGone!: () => void;
+  const ready = new Promise<void>((r) => (titleGone = r));
+  online = new Online({ controller, game, hud, opponent, sound: audio, ready });
   controller.start();
   rig.viewFor(opponent.mode === 'computer' ? opponent.humanSide : 'w', true);
 
@@ -222,8 +233,11 @@ async function boot(): Promise<void> {
   const warmed = warmUp({ pipeline, cast, fx, markers, stage: director.stage, physics });
   const boot = { warmUpMs: Math.round(performance.now() - warmStart), ...warmed };
   loop.start();
-  // Only now does the computer join (it would otherwise move during the warm-up).
+  // Only now does the computer join (it would otherwise move during the warm-up), and an
+  // online game named in the address.
   opponent.apply();
+  online.render();
+  online.fromAddress();
   loading.progress(1, 'Ready');
   loading.done();
 
@@ -231,6 +245,7 @@ async function boot(): Promise<void> {
   // ?dev to the address to go straight to the board, as the test scripts do.)
   if (new URLSearchParams(location.search).has('dev')) {
     addEventListener('pointerdown', () => audio.unlock(), { once: true });
+    titleGone();
   } else {
     const seat = { azimuth: rig.azimuth, elevation: rig.elevation, distance: rig.distance };
     rig.setOrbit(0.9, THREE.MathUtils.degToRad(21), 15.5, true);
@@ -242,11 +257,13 @@ async function boot(): Promise<void> {
       rig.inputEnabled = true;
       // Round to the player's seat the short way from wherever the drift had reached.
       rig.setOrbit(rig.azimuth, seat.elevation, seat.distance, false);
-      rig.viewFor('w');
+      // To the player's own seat (vs computer or online), otherwise Ivory's.
+      rig.viewFor(controller.seat ?? 'w');
+      titleGone();
     });
   }
 
-  installDebugApi({ scene, camera, pipeline, lights, cast, kit, loop, rig, game, controller, markers, perf, stress, director, frame, shatter, cinema, reflection, boot, engine, opponent });
+  installDebugApi({ scene, camera, pipeline, lights, cast, kit, loop, rig, game, controller, markers, perf, stress, director, frame, shatter, cinema, reflection, boot, engine, opponent, online });
 }
 
 boot().catch((err) => {

@@ -3,14 +3,16 @@
 Working notes for whoever continues this build (human or agent). The approved plan is at
 `~/.claude/plans/golden-kindling-moth.md` (the movement and captures session of 2026-11-17 had
 its own: `~/.claude/plans/pasted-content-id-af0a-read-devnotes-md-temporal-spring.md`; the
-computer opponent: `~/.claude/plans/add-a-computer-opponent-wiggly-metcalfe.md`); this file
+computer opponent: `~/.claude/plans/add-a-computer-opponent-wiggly-metcalfe.md`; online play:
+`~/.claude/plans/read-devnotes-md-add-two-player-calm-chipmunk.md`); this file
 records what exists, how to verify it, the numbers already measured, and what is left. Update it
 when any of that changes.
 
 ## Ground rules from the owner
 
-- Cinematic 3D "living statue" chess on desktop: local pass-and-play, against the computer, or
-  the computer against itself. Visual quality and motion
+- Cinematic 3D "living statue" chess on desktop: local pass-and-play, against the computer,
+  the computer against itself, or two players online with no accounts (everything lives on the
+  game's links). Visual quality and motion
   come first; movement and captures must be smooth and film-like, never janky.
 - On a capture the attacker physically moves in, attacks, and destroys the captured piece.
 - Chess rules come from chess.js; do not hand-roll rules. Do not write a chess engine: the
@@ -33,6 +35,16 @@ when any of that changes.
 - `public/assets` (about 140 MB, largest file 6.8 MB) is committed rather than fetched in CI:
   the itch.io / Poly Haven / ambientCG downloads are the least reliable step. Keep single files well
   under GitHub's 100 MB limit.
+- The online relay is live at https://stonewake-online.rbwcontent.workers.dev (the owner's
+  Cloudflare account; `DEPLOYED` in `src/net/config.ts`). It is a separate deployment: a
+  Cloudflare Worker with one Durable Object per
+  game (`server/`, see "Online play"). Free plan: SQLite-backed Durable Objects, 5 GB storage
+  per account, 100k requests a day; a game is a few KB. Deploy: in `server/`, `npx wrangler
+  login` once (the owner's Cloudflare account), then `npm run relay:deploy` from the root (a
+  push to `main` does not deploy the relay; only the page). If the address changes, update
+  `DEPLOYED` and push. With `DEPLOYED` empty a build hides the ONLINE choice. Pages
+  and the relay are on different origins: the relay answers CORS `*` (no credentials) for
+  `POST /games`; the socket is not subject to CORS.
 - Test-browser gotcha: if the Chrome for Testing window is behind other windows, rAF stops and a
   move never finishes (only screenshots force frames). `osascript -e 'tell application "Google
   Chrome for Testing" to activate'` first, and check `__sw.loop.callbacks` advances ~60/s.
@@ -45,8 +57,11 @@ npm run assets     # re-download CC0 assets into public/assets (idempotent; arch
 npm run typecheck  # tsc --noEmit
 npm test           # vitest: rules wrapper, timeline, shot chooser, frame loop, pacing, pose tools,
                    # strike planning, the choice between attacks, the engine wrapper (worker
-                   # mocked: UCI parsing, promotion suffix, stale replies), undo rule (73 tests)
+                   # mocked: UCI parsing, promotion suffix, stale replies), undo rule, online
+                   # links / referee / sync plan (95 tests)
 npm run build      # tsc + vite build into dist/ (checked: `vite preview` loads and plays captures)
+npm run relay      # the online relay on http://localhost:8787 (wrangler dev; needs `npm --prefix server install` once)
+npm run relay:check  # 25 protocol checks against a running relay (forged keys, wrong turn, stale ply, rematch...)
 node scripts/verify.mjs [passes=2] [speed=20]   # 30 scripted games in the test browser (see below)
 ```
 
@@ -151,6 +166,27 @@ camera drifts round the hall until a click). The debug API `window.__sw` is alwa
     `staleTest(movetime)` (new game, undo, mode switch and side switch while the engine is
     thinking: `appliedLate` must be 0; also a superseded raw request). `engine` and `opponent`
     are exposed too. `verify` switches the opponent to pass-and-play first.
+- Added for online play: `online.create(side)`, `online.state()` (side, connection, whether
+  this player may move, the relay's view, the board's own move list, input sides, seat, the last
+  30 lines of the session's log), `online.drop()` (cut the socket as a network fault would),
+  `online.leave()`, `online.controller` (the `Online` object).
+- **Testing online with two players.** Two test browsers, so each has its own localStorage
+  (MY GAMES, what has been seen): the usual one on CDP 9333 and a second one with another
+  profile on 9334 (same command line, `--user-data-dir=<scratch>/chrome-b
+  --remote-debugging-port=9334`; give it a few seconds after launch before connecting, or
+  Playwright fails with "Browser context management is not supported"). Drive it with
+  `CDP_URL=http://localhost:9334 node scripts/browser.mjs ...`; `browser.mjs place x y w h`
+  puts the two windows side by side (864 x 1000 each on this screen). Run `node
+  scripts/hold.mjs 9333 9334` in the background for the whole test: without a CDP client
+  attached, a window that is not frontmost is throttled by macOS to 2-3 frames a second and a
+  move takes a minute to play out (the old `osascript activate` only reaches one of two
+  instances, and System Events scripting is not permitted here). A side effect: with a CDP
+  client attached the page always reports itself visible, so test the tab-title alert by
+  overriding `document.visibilityState` in the page.
+- `wrangler dev` (local relay) does not see a browser socket close when the page navigates
+  away (a clean `close()` from script and a killed process are both seen at once). The relay
+  treats a socket not heard from for 75 s as gone, so presence comes right within about 75-105
+  s; whether production Cloudflare passes the navigation close on is not yet known.
 - `window.__lab` (clip lab): `show(clip,t,prop)`, `look(...)`, `setTime(t)`, `tipTrack()` (weapon
   tip speed peaks = candidate hit times), `state`.
 - **Frame cost:** WebGL timer queries are misleading on this GPU (it clocks down under light load
@@ -323,6 +359,32 @@ and the fracture both read. Run these before and after, and compare:
     staying behind the human (both sides), the computer's rook capture through its cinematic,
     the computer's promotion with check, undo taking back two moves, clicks on the computer's
     statues ignored on its turn, auto-play restarting after mate, pause and resume.
+- Online play session (2026-11-18), local relay (`wrangler dev`), two test browsers side by
+  side at 864 x 857:
+  - Relay protocol (`relay:check`): 25 of 25, including a forged key, a move with no hello, an
+    unknown game, a move out of turn, an illegal move, a stale ply, the same move twice,
+    garbage, a move after mate; mate, rematch (sides swapped, board clear), resignation,
+    presence on leaving, reconnecting to a stored game.
+  - In the two windows: creating as Ivory and joining from the invite (Obsidian, camera behind
+    Obsidian); clicks on the wrong turn ignored; a move reaches the other window in about 3 ms
+    (local) and plays its full cinematic there; a pawn capture seen in both windows at the
+    same moment, each from its own side; the queen's recapture; promotion by both sides
+    through the dialog (queen, and a knight); fool's mate with the mated king's finale in both;
+    resignation through the confirm card; rematch requested, shown to the other side as
+    ACCEPT REMATCH, accepted: colours swapped, cameras swung; the board consistent with
+    chess.js in both (`consistent()`).
+  - Away and back: a move made while the other window was gone was set up one move short on
+    return and played out after the pause, the camera already behind the returning player.
+    The relay stopped: both turn bars said RECONNECTING… and input closed; restarted: both
+    back within 8 s with the 13-move game intact. A's own link opened in the other browser
+    plays Ivory. Second game created: the first appears in MY GAMES and reopens from there.
+    LEAVE GAME: back to pass-and-play, address cleared, the other side sees "away" at once.
+  - Regression in the same session: `verify.mjs 1 20` 60 moves over 30 games consistent
+    (geometries 99 -> 100, textures 103, programs 52); `staleTest` 0 applied late.
+  - Deployed relay (`https://stonewake-online.rbwcontent.workers.dev`, version
+    451f8783): `relay:check` 25 of 25.
+  - Not measured: frame cost with a socket open (idle sockets and one small message every
+    30 s; nothing on the frame path); two real machines.
 - Attack clips as used now: hit time and top of the wind-up in seconds, from `weaponPath` on
   the real statues. Spear_Thrust 0.45, top set by hand at 0.25 (the spear is still until 0.2,
   the drive is 0.3-0.45, the fast part at 0.52 is the recovery). Two_Handed_Overhead_Slam
@@ -565,6 +627,52 @@ and the fracture both read. Run these before and after, and compare:
     computer), `generation`, `undo(plies)`.
   - HUD: OPPONENT panel top left (mode; side and level vs computer; level and pause in
     auto-play); the turn bar says "OBSIDIAN IS THINKING" with a pulsing chip during a search.
+- **Online play** (`src/net`, `server/`). No accounts: a game is an id plus two seat keys, and
+  a link is `<page>#play=<id>.<key>` (in the hash, so Pages never receives it). The key alone
+  decides the side; "my link" and the invite link look alike. Creating a game puts the
+  creator's own link in the address bar (`history.replaceState`), so a bookmark or reload comes
+  back to the same seat; the share card shows both links.
+  - Relay (`server/src/worker.ts`, `gameRoom.ts`): `POST /games {side}` makes the game (side
+    `random` is drawn on the relay); `GET /games/<id>/ws` is the socket to its Durable Object
+    (`idFromName(id)`), WebSocket Hibernation API, state in the object's storage, an alarm that
+    deletes a game after 120 days untouched. The key goes in the first message (`hello`), not
+    the URL. Every message is checked by `src/net/referee.ts` (pure, shared with the tests):
+    seat, turn, `ply === moves.length` (so a move sent against a position that has changed, or
+    sent twice, is refused, never applied to the wrong one), chess.js legality, result on mate
+    or draw, resignation, rematch (both must ask; the sides swap, the keys stay, `round` + 1).
+    After any change each socket gets the whole game from its own side (`state`); a refusal is
+    followed by the state as it stands, so a client always has something to put itself right
+    with. Presence: a socket counts while it is open and has been heard from in the last 75 s
+    (clients send `sync` every 30 s; `getWebSocketAutoResponseTimestamp` covers plain `ping`);
+    a silent one is closed.
+  - Client (`session.ts`, `OnlineSession`): one socket, reconnecting with backoff (1-30 s, at
+    once on `online` / `visibilitychange`); a `sync` unanswered for 10 s reopens the line.
+    `syncPlan` (`sync.ts`, pure) compares the board's moves with the relay's: one behind,
+    play it out (`controller.playUci`, the full cinematic); our own move in flight, wait; equal,
+    nothing; anything else, `controller.loadMoves` (set up at once). On opening a link, if the
+    opponent's last move has not been shown in this browser (`stonewake.online.seen.<id>` =
+    `round:plies`), the board is set up one move short and that move is played after a 1.5 s
+    pause (also after the title screen). A move that arrives during a cinematic waits for
+    `onSettled`. A move made by clicking goes out from `controller.onMove` when it is ours and
+    the relay does not have it yet; if the line is down it is sent again on reconnecting.
+    Input is open only while connected, in step with the relay and the game not over
+    (`canMove`); `Opponent` mode `online` (never stored) takes `inputSides` and `seat` from it,
+    placing the camera at once on joining and swinging it on a rematch. Undo is off
+    (`undoPlies` 0) and NEW GAME is a no-op online.
+  - `online.ts` (`Online`): create / open / leave / resign (with a confirm card) / rematch,
+    `hashchange` (pasting another link joins it), the tab-title alert ("● Your move —
+    Stonewake" and the check bell when the opponent moves while the tab is hidden; cleared on
+    return), MY GAMES (`stonewake.online.games` in localStorage: id, key, side, invite key for
+    the creator, plies, status). Leaving returns to the mode played before, with a fresh board.
+  - HUD: ONLINE in the OPPONENT panel (hidden with no relay); lobby (PLAY AS ivory / obsidian /
+    random, CREATE ONLINE GAME); in a game: your side, the opponent here / away, COPY INVITE
+    LINK (creator's browser only), COPY MY LINK, LEAVE GAME, MY GAMES. The turn bar reads YOUR
+    MOVE / WAITING FOR OBSIDIAN / RECONNECTING… / THE GAME IS OVER. Online, UNDO, NEW GAME,
+    FLIP and FOLLOW TURN are hidden and RESIGN shown; the game-over card offers REMATCH
+    (ACCEPT REMATCH when the other side has asked) and VIEW THE BOARD (all modes).
+  - `ChessGame` gained `historyUci()`, `resign(side)` (in `status().resigned`, cleared by
+    reset / load / undo) and `uciOf`; `GameController` gained `loadMoves`, `onMove`,
+    `resign`, and disposers from `onSettled` / `onMove`.
 - **Interface:** title screen (`Hud.showTitle`), toggles for sound, cinematic captures (off:
   no cut, no slow motion) and follow-turn, all remembered in localStorage. The toggles and FLIP
   sit in a collapsible OPTIONS panel under OPPONENT (both in `.leftcol`, top left; open state
@@ -596,12 +704,19 @@ and the fracture both read. Run these before and after, and compare:
    scale is fixed at the device pixel ratio, capped at 2; the reflection and depth of field
    have no off switch in the interface), tests for fracture closedness, a layout for windows
    narrower than about 1000 px (the buttons wrap over the board).
-3. **Not verified:** Safari and Firefox (everything was checked in Chromium only); a real
+3. **Online, not done:** not yet tried across two machines or through real networks (the
+   deployed relay passes `relay:check`; the two-window tests ran against `wrangler dev`). No clocks, no spectators, no draw
+   offers, no chat. Anyone holding a link plays that seat (by design: the link is the
+   identity; lost links cannot be recovered or revoked). The your-move alert only works while
+   the tab is open (a closed tab would need a service worker and Web Push). No rate limiting
+   on `POST /games` beyond Cloudflare's own and the free plan's daily quota. Resignation has
+   no cinematic of its own (the card only).
+4. **Not verified:** Safari and Firefox (everything was checked in Chromium only); a real
    120 Hz display (the pacing logic is unit-tested, the test browser runs at 60 Hz); how any of
    the sound actually sounds (the rook's grind included: measured, not heard). In the movement
    and captures session every attack was looked at as stills and every kind of victim was seen
    struck, about 30 of the 60 pairings; the rest are checked by number only (`strikes()`).
-4. Known rough edges:
+5. Known rough edges:
    - The knight's second attack (leap, land, cut) is the weakest of the twelve: two beats with
      a landing between them, and a swing so wide that it is shut out whenever anyone stands near.
    - Variation thins out in a crowd. An attack whose weapon would pass through a bystander is

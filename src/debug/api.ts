@@ -34,6 +34,7 @@ import { audioReport } from './audioReport';
 import type { PerfRecorder } from './perf';
 import { LEVELS, type Engine, type Level } from '../ai/engine';
 import type { Mode, Opponent } from '../ai/opponent';
+import type { Online } from '../net/online';
 
 export interface DebugDeps {
   scene: THREE.Scene;
@@ -59,6 +60,7 @@ export interface DebugDeps {
   boot: { warmUpMs: number; strikesMs: number };
   engine: Engine;
   opponent: Opponent;
+  online: Online;
 }
 
 /** How far the ankle sits above the ball of the foot in a statue's frozen stance, metres. */
@@ -768,6 +770,36 @@ export function installDebugApi(d: DebugDeps): void {
       return recordPerf(async () => {
         for (const m of moves) await api.move(m);
       }, renderWidth);
+    },
+
+    // ---------------------------------------------------------------- online play
+    /**
+     * `online.create('w')` makes a game (as the CREATE button does); `online.state()` gives the
+     * session as it stands, with both links and the sync log; `online.drop()` cuts the socket
+     * as a network fault would (it reconnects by itself); `online.leave()`.
+     */
+    online: {
+      controller: d.online,
+      create: (side: Side | 'random' = 'w') => d.online.create(side),
+      leave: () => d.online.leaveGame(),
+      drop: () => d.online.session?.drop(),
+      state(): unknown {
+        const s = d.online.session;
+        if (!s) return null;
+        return {
+          id: s.link.id,
+          side: s.side,
+          connection: s.connection,
+          canMove: s.canMove,
+          view: s.view,
+          local: game.historyUci(),
+          busy: controller.isBusy,
+          inputSides: [...controller.inputSides],
+          seat: controller.seat,
+          log: s.log.slice(-30),
+          links: { mine: location.href, address: location.hash },
+        };
+      },
     },
 
     // ---------------------------------------------------------------- computer opponent

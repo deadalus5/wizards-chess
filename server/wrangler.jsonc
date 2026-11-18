@@ -1,0 +1,12 @@
+{
+  // Stonewake online relay. Deploy: `npx wrangler login` once, then `npm run deploy` here.
+  "name": "stonewake-online",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "GameRoom" }]
+  },
+  // SQLite-backed Durable Objects are the kind the Workers Free plan allows.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }],
+  "observability": { "enabled": true }
+}
