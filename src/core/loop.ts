@@ -25,6 +25,13 @@ export class FrameLoop {
   targetFps = 60;
   /** Choose between the display's full rate and 60 automatically. */
   auto = true;
+  /**
+   * Phones and tablets: never draw more frames a second than this (60, or an even 30), whatever
+   * the display runs at. It replaces `targetFps` and `auto`, and may be changed at any time (the
+   * game idles at 30) without the change being taken for a missed frame. Null, as on the
+   * desktop, leaves the loop exactly as it was.
+   */
+  cap: number | null = null;
   /** Median interval between rAF callbacks, in milliseconds. */
   displayInterval = 1000 / 60;
   /**
@@ -45,6 +52,8 @@ export class FrameLoop {
   private gaveUpFullRate = false;
   private windowFrames = 0;
   private windowMissed = 0;
+  /** How many callbacks went to a frame last time (only followed under `cap`). */
+  private lastEvery = 0;
 
   constructor(private readonly fn: FrameFn) {}
 
@@ -90,10 +99,14 @@ export class FrameLoop {
     this.lastCallback = now;
 
     // Render on every callback, or on every n-th when the display is faster than the target.
-    const every = Math.max(1, Math.round(1000 / this.targetFps / this.displayInterval));
+    // (Under a cap: the fewest callbacks to a frame that keeps within it. Rounding up, less a
+    // little, so that a 90 Hz display sits steadily at every second callback: rounding to the
+    // nearest lands exactly between one and two there and flips with the jitter.)
+    const every = this.cap === null ? Math.max(1, Math.round(1000 / this.targetFps / this.displayInterval)) : Math.max(1, Math.ceil(1000 / this.cap / this.displayInterval - 0.3));
     if (++this.callbacks % every !== 0) return;
     if (this.lastRender < 0) {
       this.lastRender = now;
+      this.lastEvery = every;
       return;
     }
     const elapsed = now - this.lastRender;
@@ -101,6 +114,14 @@ export class FrameLoop {
 
     const unit = this.displayInterval * every;
     let step = unit;
+    if (this.cap !== null && every !== this.lastEvery) {
+      // The pace has just been changed: this frame's interval belongs to neither pace, so it
+      // is neither late nor early, and nothing is owed.
+      this.lastEvery = every;
+      this.debt = 0;
+      this.fn(Math.min(Math.max(elapsed, this.displayInterval), unit, 100) / 1000, now / 1000);
+      return;
+    }
     if (elapsed > 250) {
       // Back from a hidden tab or a breakpoint: carry on from here rather than catching up.
       this.debt = 0;

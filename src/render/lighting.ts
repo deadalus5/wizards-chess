@@ -24,9 +24,12 @@ export interface LightRigOptions {
   braziers: THREE.Vector3[];
   /** Optional pattern projected by the key light. */
   cookie?: THREE.Texture;
+  /** Side of the key light's shadow map in texels, and the blur of its edge in those texels. */
+  shadowMapSize?: number;
+  shadowRadius?: number;
 }
 
-export function createLightRig(scene: THREE.Scene, { radius, braziers: brazierPositions, cookie }: LightRigOptions): LightRig {
+export function createLightRig(scene: THREE.Scene, { radius, braziers: brazierPositions, cookie, shadowMapSize = 4096, shadowRadius = 2.5 }: LightRigOptions): LightRig {
   const key = new THREE.SpotLight(0xf3f1ee, 470, 0, 0.5, 0.75, 2);
   key.name = 'key';
   const keyDistance = Math.max(12, radius * 1.9);
@@ -34,12 +37,12 @@ export function createLightRig(scene: THREE.Scene, { radius, braziers: brazierPo
   key.target.position.set(0, 0.6, 0);
   key.angle = Math.atan((radius * 1.25) / keyDistance);
   key.castShadow = true;
-  key.shadow.mapSize.set(4096, 4096);
+  key.shadow.mapSize.set(shadowMapSize, shadowMapSize);
   key.shadow.camera.near = Math.max(1, keyDistance - radius * 1.6);
   key.shadow.camera.far = keyDistance + radius * 1.6;
   key.shadow.bias = -0.00025;
   key.shadow.normalBias = 0.018;
-  key.shadow.radius = 2.5;
+  key.shadow.radius = shadowRadius;
   if (cookie) key.map = cookie;
   scene.add(key, key.target);
 

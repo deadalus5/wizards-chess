@@ -4,7 +4,7 @@ import { rigFromBones, type Rig } from '../anim/rig';
 import { createNoise3D } from '../render/noise3d';
 import { createNormalArray } from '../render/normalArray';
 import type { StoneShared } from '../render/stoneMaterial';
-import { ASSETS, findSkeleton, loadClipManifest, loadGLTF, loadSourceClip, type ClipInfo } from './assets';
+import { ASSETS, LITE_ASSETS, findSkeleton, loadClipManifest, loadGLTF, loadSourceClip, type ClipInfo } from './assets';
 import { LAYER, REGION, skinnedPartsOf, type PiecePart } from './buildPiece';
 
 export type BodyKind = 'male' | 'female';
@@ -33,8 +33,13 @@ export class StatueKit {
     readonly manifest: ClipInfo[],
   ) {}
 
-  static async load(normalSize = 2048): Promise<StatueKit> {
+  /**
+   * `lite` loads the smaller copies of the normal maps made for phones and tablets (assets/lite)
+   * and lets go of the array's CPU copy once it is uploaded.
+   */
+  static async load(normalSize = 2048, lite = false): Promise<StatueKit> {
     const sh = `${ASSETS}/models/superhero`;
+    const small = `${LITE_ASSETS}/models`;
     const [male, female, mannequin, manifest, normals, ...hairScenes] = await Promise.all([
       loadGLTF(`${sh}/Superhero_Male_FullBody.gltf`),
       loadGLTF(`${sh}/Superhero_Female_FullBody.gltf`),
@@ -42,14 +47,23 @@ export class StatueKit {
       loadClipManifest(),
       // Order must match LAYER (index 0 is the built-in flat layer).
       createNormalArray(
-        [
-          `${sh}/T_Superhero_Male_Normal.png`,
-          `${sh}/T_Superhero_Female_Normal.png`,
-          `${sh}/T_Hair_1_Normal.png`,
-          `${sh}/T_Hair_2_Normal.png`,
-          `${ASSETS}/models/chess_set/textures/chess_set_pieces_white_nor_gl_2k.jpg`,
-        ],
+        lite
+          ? [
+              `${small}/superhero/T_Superhero_Male_Normal.jpg`,
+              `${small}/superhero/T_Superhero_Female_Normal.jpg`,
+              `${small}/superhero/T_Hair_1_Normal.jpg`,
+              `${small}/superhero/T_Hair_2_Normal.jpg`,
+              `${small}/chess_set/textures/chess_set_pieces_white_nor_gl_1k.jpg`,
+            ]
+          : [
+              `${sh}/T_Superhero_Male_Normal.png`,
+              `${sh}/T_Superhero_Female_Normal.png`,
+              `${sh}/T_Hair_1_Normal.png`,
+              `${sh}/T_Hair_2_Normal.png`,
+              `${ASSETS}/models/chess_set/textures/chess_set_pieces_white_nor_gl_2k.jpg`,
+            ],
         normalSize,
+        lite,
       ),
       ...HAIR_FILES.map((h) => loadGLTF(`${sh}/${h}.gltf`)),
     ]);

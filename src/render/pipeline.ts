@@ -10,6 +10,7 @@ import {
   EffectComposer,
   EffectMaterial,
   EffectPass,
+  FXAAEffect,
   HueSaturationEffect,
   NoiseEffect,
   RenderPass,
@@ -20,6 +21,7 @@ import {
   VignetteEffect,
 } from 'postprocessing';
 import { N8AOPostPass } from 'n8ao';
+import { DESKTOP_RENDER, type RenderSettings } from '../core/device';
 
 /**
  * Encodes to sRGB at the end of the grading pass so the anti-aliasing pass that follows detects
@@ -65,6 +67,13 @@ class LetterboxEffect extends Effect {
   }
   set amount(v: number) {
     this.uniforms.get('amount')!.value = v;
+  }
+  /** Fraction of the frame height each bar covers when fully in. */
+  get barSize(): number {
+    return this.uniforms.get('barSize')!.value as number;
+  }
+  set barSize(v: number) {
+    this.uniforms.get('barSize')!.value = v;
   }
 }
 
@@ -167,7 +176,8 @@ export class Pipeline {
   readonly hueSat: HueSaturationEffect;
   readonly contrast: BrightnessContrastEffect;
   readonly vignette: VignetteEffect;
-  readonly smaa: SMAAEffect;
+  /** Null where FXAA is used in its place (phones and tablets). */
+  readonly smaa: SMAAEffect | null;
   readonly grain: NoiseEffect;
   readonly letterbox: LetterboxEffect;
   readonly gradePass: EffectPass;
@@ -188,6 +198,8 @@ export class Pipeline {
     readonly scene: THREE.Scene,
     readonly camera: THREE.PerspectiveCamera,
     parent: HTMLElement,
+    /** What is built differently on a phone or tablet. The defaults are the desktop's, i.e. the chain as it has always been. */
+    settings: Pick<RenderSettings, 'antialias' | 'bloomLuminanceScale'> = DESKTOP_RENDER,
   ) {
     const renderer = new THREE.WebGLRenderer({ powerPreference: 'high-performance', antialias: false, stencil: false, depth: false });
     renderer.toneMapping = THREE.NoToneMapping;
@@ -230,6 +242,8 @@ export class Pipeline {
     composer.addPass(this.overlayPass);
 
     this.bloom = new BloomEffect({ mipmapBlur: true, luminanceThreshold: 1.0, luminanceSmoothing: 0.08, intensity: 0.9, radius: 0.8, levels: 8 });
+    // The bright pass is the bloom's only full-size buffer; a phone finds it at half size.
+    if (settings.bloomLuminanceScale !== 1) this.bloom.luminancePass.resolution.scale = settings.bloomLuminanceScale;
     this.tone = new ToneMappingEffect({ mode: ToneMappingMode.AGX });
     this.hueSat = new HueSaturationEffect({ saturation: 0.05 });
     this.contrast = new BrightnessContrastEffect({ contrast: 0.08 });
@@ -237,10 +251,18 @@ export class Pipeline {
     this.gradePass = new EffectPass(camera, this.bloom, this.tone, this.hueSat, this.contrast, this.vignette, new SRGBEncodeEffect());
     composer.addPass(this.gradePass);
 
-    this.smaa = new SMAAEffect({ preset: SMAAPreset.HIGH, edgeDetectionMode: EdgeDetectionMode.COLOR });
     this.grain = new NoiseEffect({ blendFunction: BlendFunction.OVERLAY, premultiply: false });
     this.letterbox = new LetterboxEffect();
-    this.finalPass = new EffectPass(camera, this.smaa, this.grain, this.letterbox);
+    if (settings.antialias === 'smaa') {
+      this.smaa = new SMAAEffect({ preset: SMAAPreset.HIGH, edgeDetectionMode: EdgeDetectionMode.COLOR });
+      this.finalPass = new EffectPass(camera, this.smaa, this.grain, this.letterbox);
+    } else {
+      // FXAA is one pass inside this one, where SMAA is two full-size passes of its own before
+      // it. (An effect merely switched off would still run them, so it is left out instead.)
+      // It reads its neighbours from the incoming picture, so it has to come first.
+      this.smaa = null;
+      this.finalPass = new EffectPass(camera, new FXAAEffect(), this.grain, this.letterbox);
+    }
     // The grading pass already encoded to sRGB.
     (this.finalPass.fullscreenMaterial as EffectMaterial).encodeOutput = false;
     this.finalPass.dithering = true;
@@ -286,14 +308,30 @@ export class Pipeline {
   /** Current depth-of-field strength (0 = off) and the range over which blur reaches full. */
   bokeh = 0;
   focusRange = 6;
+  /** Whether depth of field may be used at all (the lightest picture on a phone goes without). */
+  dofAllowed = true;
 
   /** Depth of field on/off with strength; the focus point is `this.focus`. */
   setDepthOfField(bokehScale: number, focusRange = 6): void {
-    this.dofPass.enabled = bokehScale > 0.01;
+    this.dofPass.enabled = this.dofAllowed && bokehScale > 0.01;
     this.dof.bokehScale = bokehScale;
     this.dof.cocMaterial.focusRange = focusRange;
     this.bokeh = this.dofPass.enabled ? bokehScale : 0;
     this.focusRange = focusRange;
+  }
+
+  /**
+   * Size the depth of field's blur by the scene instead of by the picture: `frameHeight` is
+   * the height of the frame at the focus, in metres. The effect measures its blur in texels,
+   * and was tuned on a desktop picture (1720 pixels for a frame four metres high, 428 to the
+   * metre); on a phone's smaller picture the same number of texels is a far heavier blur.
+   * This gives it texels of the size they would be at that scale. A resize undoes it.
+   */
+  setBlurFrame(frameHeight: number): void {
+    const height = 428 * frameHeight;
+    const width = height * this.camera.aspect;
+    const dof = this.dof as unknown as Record<string, { fullscreenMaterial: { setSize(w: number, h: number): void } }>;
+    for (const pass of ['bokehNearBasePass', 'bokehNearFillPass', 'bokehFarBasePass', 'bokehFarFillPass']) dof[pass].fullscreenMaterial.setSize(width, height);
   }
 
   render(dt: number): void {

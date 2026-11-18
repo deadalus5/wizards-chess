@@ -1,0 +1,938 @@
+/*
+ * The interface on a phone or tablet. Everything here is under `html.touch`, which is set only
+ * when the page finds itself on one (core/device.ts): on the desktop none of it applies and
+ * hud.css stands alone, untouched. The elements are the desktop HUD's own, re-homed by
+ * ui/touchChrome.ts.
+ *
+ * Three arrangements, each keeping to space the board does not use:
+ *   tall  (portrait, and anything nearly square): a band above the board and one below;
+ *   rail  (a phone on its side): a column down the left gutter that perspective leaves free;
+ *   bar   (a tablet on its side): one bar along the top.
+ */
+
+html.touch,
+html.touch body {
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+html.touch body {
+  /* No pinching or double-tapping the page itself; the sheet scrolls by its own rule. */
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+html.touch #app,
+html.touch #app canvas {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  outline: none;
+}
+
+html.touch #hud {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --edge: 12px;
+  --plate: rgba(10, 11, 15, 0.74);
+  /* What the bands take from the board (read back by the camera's seat). */
+  --free-top: calc(var(--safe-top) + 92px);
+  --free-right: var(--safe-right);
+  --free-bottom: calc(var(--safe-bottom) + 72px);
+  --free-left: var(--safe-left);
+  font-size: 15px;
+}
+html.touch #hud .free-area {
+  position: fixed;
+  inset: 0;
+  box-sizing: border-box;
+  padding: var(--free-top) var(--free-right) var(--free-bottom) var(--free-left);
+  visibility: hidden;
+  pointer-events: none;
+}
+html.touch #hud button {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Faded chrome must not take a touch meant for the board. */
+html.touch #hud.cinema .chrome,
+html.touch #hud.cinema .chrome button {
+  pointer-events: none;
+}
+/* The title lingers for a second as it fades: it should not swallow the first tap on the board. */
+html.touch #title:not(.show) {
+  pointer-events: none;
+}
+/* A blurred backdrop over the picture is redrawn with every frame of it. */
+html.touch #hud .turn,
+html.touch #hud .panel,
+html.touch #hud .actions button {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* ------------------------------------------------------------------ on the board */
+html.touch #hud .wordmark {
+  display: none;
+}
+/* In the tall and bar arrangements the group is only a group: its members place themselves. */
+html.touch #hud .rail {
+  display: contents;
+}
+
+html.touch #hud .menu-button {
+  position: absolute;
+  left: calc(var(--safe-left) + var(--edge));
+  top: calc(var(--safe-top) + 10px);
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: var(--plate);
+  border: 1px solid var(--panel-edge);
+  border-radius: 12px;
+  cursor: pointer;
+}
+html.touch #hud .menu-button i {
+  display: block;
+  width: 18px;
+  height: 1.5px;
+  background: var(--gold);
+  border-radius: 1px;
+  transition: transform 0.25s ease, opacity 0.2s ease;
+}
+html.touch #hud.menu-open .menu-button i:nth-child(1) {
+  transform: translateY(6.5px) rotate(45deg);
+}
+html.touch #hud.menu-open .menu-button i:nth-child(2) {
+  opacity: 0;
+}
+html.touch #hud.menu-open .menu-button i:nth-child(3) {
+  transform: translateY(-6.5px) rotate(-45deg);
+}
+
+html.touch #hud .turn {
+  /* Centred between the edges, not from the middle outwards: placed at 50 % it would be laid
+     out in half the screen's width and wrap what fits easily in the whole of it. */
+  left: 0;
+  right: 0;
+  top: calc(var(--safe-top) + 12px);
+  transform: none;
+  width: -webkit-fit-content;
+  width: fit-content;
+  margin: 0 auto;
+  max-width: calc(100vw - 2 * (46px + var(--edge) + 10px) - var(--safe-left) - var(--safe-right));
+  box-sizing: border-box;
+  min-height: 42px;
+  padding: 8px 18px 8px 14px;
+  gap: 10px;
+  /* A long message wraps inside the pill; the chip stays beside it. */
+  flex-wrap: nowrap;
+  justify-content: center;
+  background: var(--plate);
+  border-radius: 21px;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  line-height: 1.5;
+  text-align: center;
+  white-space: normal;
+}
+html.touch #hud .turn > span {
+  min-width: 0;
+}
+html.touch #hud .turn .chip {
+  flex: none;
+  width: 10px;
+  height: 10px;
+}
+html.touch #hud .turn .check:empty {
+  display: none;
+}
+
+/* The fallen: one quiet line under the turn. */
+html.touch #hud .captured {
+  left: 0;
+  right: 0;
+  top: calc(var(--safe-top) + 60px);
+  bottom: auto;
+  transform: none;
+  width: -webkit-fit-content;
+  width: fit-content;
+  margin: 0 auto;
+  min-width: 0;
+  max-width: calc(100vw - 2 * var(--edge));
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0 14px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  pointer-events: none;
+}
+html.touch #hud .captured h3 {
+  display: none;
+}
+html.touch #hud .captured .row {
+  min-height: 0;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: 0;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+}
+html.touch #hud .captured .row:empty {
+  display: none;
+}
+/* A symbol face first, so a phone does not draw the pawn as a coloured emoji. */
+html.touch #hud .captured .row,
+html.touch #hud .overlay .choices button {
+  font-family: 'Apple Symbols', 'Segoe UI Symbol', 'Noto Sans Symbols 2', 'Noto Sans Symbols', var(--text);
+  font-variant-emoji: text;
+}
+
+html.touch #hud .actions {
+  left: calc(var(--safe-left) + var(--edge));
+  right: auto;
+  bottom: calc(var(--safe-bottom) + var(--edge));
+  max-width: none;
+  flex-wrap: nowrap;
+}
+html.touch #hud .actions button,
+html.touch #hud .hurry {
+  box-sizing: border-box;
+  min-width: 84px;
+  min-height: 46px;
+  padding: 0 18px;
+  background: var(--plate);
+  border: 1px solid var(--panel-edge);
+  border-radius: 12px;
+  font-family: var(--display);
+  font-size: 11.5px;
+  letter-spacing: 0.22em;
+  color: var(--ink);
+  cursor: pointer;
+}
+html.touch #hud .actions button:hover {
+  border-color: var(--panel-edge);
+  color: var(--ink);
+}
+html.touch #hud .actions button:active,
+html.touch #hud .hurry:active,
+html.touch #hud .menu-button:active {
+  border-color: var(--gold);
+}
+html.touch #hud .actions button:disabled {
+  opacity: 0.3;
+}
+
+/* HURRY: there only while a move with some way to go is playing; dimmed through a shot. */
+html.touch #hud .hurry {
+  position: absolute;
+  right: calc(var(--safe-right) + var(--edge));
+  bottom: calc(var(--safe-bottom) + var(--edge));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--gold);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.35s ease, visibility 0.35s;
+}
+html.touch #hud .hurry i {
+  font-style: normal;
+  letter-spacing: -0.12em;
+  font-size: 13px;
+}
+html.touch #hud.hurry-on .hurry {
+  opacity: 1;
+  visibility: visible;
+}
+html.touch #hud.hurry-on.cinema .hurry {
+  opacity: 0.5;
+}
+html.touch #hud.intro .hurry,
+html.touch #hud.menu-open .hurry {
+  opacity: 0;
+  visibility: hidden;
+}
+
+html.touch #hud .hint {
+  top: auto;
+  bottom: calc(var(--safe-bottom) + 74px);
+  width: min(86vw, 420px);
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: center;
+  white-space: normal;
+  color: var(--ink-dim);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.95);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ the menu */
+html.touch #hud .sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  background: rgba(4, 5, 8, 0.58);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.3s ease, visibility 0.3s;
+}
+html.touch #hud.menu-open .sheet-scrim {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+html.touch #hud .sheet {
+  position: fixed;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  width: auto;
+  box-sizing: border-box;
+  max-height: 84vh;
+  max-height: 84dvh;
+  padding: 0 calc(18px + var(--safe-right)) calc(20px + var(--safe-bottom)) calc(18px + var(--safe-left));
+  gap: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  background: rgba(13, 14, 19, 0.97);
+  border-top: 1px solid rgba(227, 184, 102, 0.34);
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+  visibility: hidden;
+  transform: translateY(104%);
+  transition: transform 0.34s cubic-bezier(0.22, 0.8, 0.24, 1), visibility 0.34s;
+}
+html.touch #hud.menu-open .sheet {
+  visibility: visible;
+  transform: none;
+}
+/* The menu is no part of the chrome that fades for a cinematic shot or the title. */
+html.touch #hud .sheet .chrome,
+html.touch #hud.cinema .sheet .chrome,
+html.touch #hud.intro .sheet .chrome {
+  opacity: 1;
+  pointer-events: auto;
+  transition: none;
+}
+html.touch #hud.cinema .sheet .chrome button,
+html.touch #hud.intro .sheet .chrome button {
+  pointer-events: auto;
+}
+
+html.touch #hud .sheet-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 58px;
+  padding-top: 8px;
+  margin: 0 -2px;
+  background: linear-gradient(rgba(13, 14, 19, 1) 78%, rgba(13, 14, 19, 0));
+}
+html.touch #hud .sheet-head .grip {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  width: 38px;
+  height: 4px;
+  margin-left: -19px;
+  border-radius: 2px;
+  background: var(--ink-faint);
+}
+html.touch #hud .sheet-head .name {
+  font-family: var(--display);
+  font-size: 12px;
+  letter-spacing: 0.36em;
+  color: var(--ink-dim);
+}
+html.touch #hud .sheet-close {
+  min-height: 46px;
+  padding: 0 2px 0 18px;
+  background: none;
+  border: none;
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  color: var(--gold);
+  cursor: pointer;
+}
+
+html.touch #hud .sheet-game {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 10px;
+  margin: 2px 0 16px;
+}
+html.touch #hud .sheet-game button {
+  min-height: 48px;
+  background: rgba(22, 24, 30, 0.7);
+  border: 1px solid var(--panel-edge);
+  border-radius: 12px;
+  font-family: var(--display);
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  color: var(--ink);
+  cursor: pointer;
+}
+html.touch #hud .sheet-game button:active {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+/* As on the desktop: online there is no new game, and RESIGN only while one is being played. */
+html.touch #hud.online-game .sheet-game .newgame,
+html.touch #hud:not(.online-game) .sheet-game .resign,
+html.touch #hud.online-over .sheet-game .resign {
+  display: none;
+}
+html.touch #hud.online-over .sheet-game {
+  display: none;
+}
+
+html.touch #hud .sheet .opponent,
+html.touch #hud .sheet .options,
+html.touch #hud .sheet .moves {
+  position: static;
+  width: auto;
+  max-height: none;
+  padding: 16px 0 12px;
+  background: none;
+  border: none;
+  border-top: 1px solid rgba(227, 184, 102, 0.14);
+  border-radius: 0;
+}
+html.touch #hud .sheet h3,
+html.touch #hud .sheet .options .head {
+  margin: 0 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.32em;
+  color: var(--ink-faint);
+}
+
+/* Who plays: one row to a choice. */
+html.touch #hud .sheet .opponent button,
+html.touch #hud .sheet .options button {
+  min-height: 46px;
+  padding: 0;
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  color: var(--ink-dim);
+}
+html.touch #hud .sheet .opponent button:hover,
+html.touch #hud .sheet .options button:hover {
+  color: var(--ink-dim);
+}
+html.touch #hud .sheet .opponent button[aria-pressed='true'],
+html.touch #hud .sheet .options button[aria-pressed='true'] {
+  color: var(--gold);
+}
+html.touch #hud .sheet .opponent .seg {
+  gap: 8px;
+  margin-top: 10px;
+}
+html.touch #hud .sheet .opponent .seg.modes {
+  gap: 0;
+  margin-top: 0;
+}
+html.touch #hud .sheet .opponent .seg + .seg {
+  padding-top: 12px;
+}
+html.touch #hud .sheet .opponent .modes button {
+  display: flex;
+  align-items: center;
+}
+html.touch #hud .sheet .opponent .modes button::before {
+  width: 7px;
+  height: 7px;
+  margin: 0 14px 0 2px;
+  flex: none;
+}
+/* Side, level and the like: buttons side by side. */
+html.touch #hud .sheet .opponent .sides,
+html.touch #hud .sheet .opponent .levels,
+html.touch #hud .sheet .opponent .pause {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+}
+html.touch #hud .sheet .opponent[data-mode='pass'] .sides,
+html.touch #hud .sheet .opponent[data-mode='pass'] .levels,
+html.touch #hud .sheet .opponent[data-mode='pass'] .pause,
+html.touch #hud .sheet .opponent[data-mode='computer'] .pause,
+html.touch #hud .sheet .opponent[data-mode='auto'] .sides,
+html.touch #hud .sheet .opponent[data-mode='online'] .sides,
+html.touch #hud .sheet .opponent[data-mode='online'] .levels,
+html.touch #hud .sheet .opponent[data-mode='online'] .pause,
+html.touch #hud .sheet .opponent:not([data-mode='online']) .online {
+  display: none;
+}
+html.touch #hud .sheet .opponent .sides button,
+html.touch #hud .sheet .opponent .levels button,
+html.touch #hud .sheet .opponent .pause button,
+html.touch #hud .sheet .online .playas button,
+html.touch #hud .sheet .online .ingame button,
+html.touch #hud .sheet .online .go {
+  min-height: 44px;
+  padding: 0 6px;
+  border: 1px solid rgba(227, 184, 102, 0.18);
+  border-radius: 10px;
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-align: center;
+}
+html.touch #hud .sheet .opponent .sides button[aria-pressed='true'],
+html.touch #hud .sheet .opponent .levels button[aria-pressed='true'],
+html.touch #hud .sheet .online .playas button[aria-pressed='true'] {
+  border-color: rgba(227, 184, 102, 0.7);
+  background: rgba(227, 184, 102, 0.09);
+}
+html.touch #hud .sheet .opponent .pause button {
+  color: var(--gold);
+  border-color: rgba(227, 184, 102, 0.5);
+}
+
+/* Online. */
+html.touch #hud .sheet .online .lobby,
+html.touch #hud .sheet .online .ingame {
+  gap: 8px;
+}
+html.touch #hud .sheet .online .label {
+  margin: 4px 0 6px;
+  font-size: 10px;
+}
+html.touch #hud .sheet .online .playas {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+html.touch #hud .sheet .online .playas .label {
+  grid-column: 1 / -1;
+  width: auto;
+}
+html.touch #hud .sheet .online .go {
+  min-height: 48px;
+  margin-top: 4px;
+  color: var(--gold);
+  border-color: rgba(227, 184, 102, 0.6);
+}
+html.touch #hud .sheet .online .who {
+  font-size: 13px;
+}
+html.touch #hud .sheet .online .status {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+html.touch #hud .sheet .online .ingame .send {
+  color: var(--gold);
+  border-color: rgba(227, 184, 102, 0.6);
+}
+html.touch #hud .sheet .online .mine .list {
+  max-height: 184px;
+  touch-action: pan-y;
+}
+html.touch #hud .sheet .online .mine button {
+  min-height: 44px;
+  font-size: 12px;
+}
+
+/* Options: always open here, each one a row with its switch. */
+html.touch #hud .sheet .options .head {
+  min-height: 0;
+  pointer-events: none;
+}
+html.touch #hud .sheet .options .head::after {
+  display: none;
+}
+html.touch #hud .sheet .options .body {
+  display: flex;
+  gap: 0;
+  margin-top: 2px;
+  padding-top: 0;
+  border-top: none;
+}
+html.touch #hud .sheet .options .body button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+html.touch #hud .sheet .options .body button[aria-pressed]::after {
+  content: '';
+  flex: none;
+  width: 36px;
+  height: 20px;
+  box-sizing: border-box;
+  border: 1px solid var(--ink-faint);
+  border-radius: 10px;
+  background: radial-gradient(circle at 10px 50%, var(--ink-faint) 5.5px, transparent 6.5px);
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+html.touch #hud .sheet .options .body button[aria-pressed='true']::after {
+  border-color: rgba(227, 184, 102, 0.75);
+  background: radial-gradient(circle at calc(100% - 10px) 50%, var(--gold) 5.5px, transparent 6.5px), rgba(227, 184, 102, 0.12);
+}
+html.touch #hud.online-game .sheet .options .flip,
+html.touch #hud.online-game .sheet .options .follow {
+  display: none;
+}
+
+/* The moves. */
+html.touch #hud .sheet .moves {
+  display: block;
+  overflow: visible;
+}
+html.touch #hud .sheet .moves ol {
+  max-height: 204px;
+  padding: 0;
+  font-size: 15px;
+  touch-action: pan-y;
+}
+html.touch #hud .sheet .moves li {
+  grid-template-columns: 44px 1fr 1fr;
+  padding: 5px 0;
+}
+
+/* ------------------------------------------------------------------ cards */
+html.touch #hud .overlay {
+  position: fixed;
+  z-index: 8;
+  padding: calc(14px + var(--safe-top)) calc(14px + var(--safe-right)) calc(14px + var(--safe-bottom)) calc(14px + var(--safe-left));
+  box-sizing: border-box;
+}
+html.touch #hud .overlay .card {
+  box-sizing: border-box;
+  width: min(100%, 440px);
+  max-height: 100%;
+  padding: 26px 22px 22px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  background: rgba(13, 14, 19, 0.94);
+}
+html.touch #hud .overlay h2 {
+  font-size: clamp(20px, 6.6vw, 30px);
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;
+  line-height: 1.25;
+}
+html.touch #hud .overlay p {
+  margin: 10px 0 20px;
+  line-height: 1.45;
+}
+html.touch #hud .overlay .primary,
+html.touch #hud .overlay .secondary {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  margin: 10px 0 0;
+  padding: 0 14px;
+  font-size: 12px;
+}
+html.touch #hud .overlay .primary:hover,
+html.touch #hud .overlay .secondary:hover {
+  background: transparent;
+  border-color: var(--panel-edge);
+  color: var(--ink-dim);
+}
+html.touch #hud .overlay .primary:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+html.touch #hud .overlay .primary:active,
+html.touch #hud .overlay .secondary:active {
+  background: rgba(227, 184, 102, 0.12);
+}
+/* As on the desktop: which of NEW GAME and REMATCH the game-over card offers. */
+html.touch #hud.online-game .overlay .again,
+html.touch #hud:not(.online-game) .overlay .rematch {
+  display: none;
+}
+html.touch #hud .overlay .note {
+  margin: -8px 0 6px;
+}
+html.touch #hud .overlay .buttons {
+  flex-direction: column;
+  gap: 0;
+}
+
+/* What the pawn becomes: four tiles a thumb can find. */
+html.touch #hud .overlay .choices {
+  gap: 10px;
+}
+html.touch #hud .overlay .choices button {
+  flex: 1 1 0;
+  width: auto;
+  max-width: 92px;
+  height: 100px;
+  font-size: 42px;
+}
+html.touch #hud .overlay .choices button:hover {
+  border-color: var(--panel-edge);
+  transform: none;
+}
+html.touch #hud .overlay .choices button:active {
+  border-color: var(--gold);
+}
+html.touch #hud .overlay .choices button span {
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+}
+
+/* The two links of an online game. */
+html.touch #hud .share .card {
+  width: min(100%, 520px);
+  text-align: center;
+}
+html.touch #hud .share .card > p {
+  font-size: 14px;
+}
+html.touch #hud .share .linkrow {
+  grid-template-columns: 1fr auto;
+  gap: 6px 8px;
+}
+html.touch #hud .share .linkrow.with-send {
+  grid-template-columns: 1fr auto auto;
+}
+html.touch #hud .share .linkrow input {
+  /* Sixteen pixels: anything smaller and iOS zooms the page when the field is touched. */
+  font-size: 16px;
+  min-height: 46px;
+  box-sizing: border-box;
+  padding: 0 11px;
+}
+html.touch #hud .share .linkrow .secondary {
+  width: auto;
+  min-height: 46px;
+  margin: 0;
+  padding: 0 16px;
+}
+html.touch #hud .share .linkrow .send {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+/* ------------------------------------------------------------------ title and loading */
+html.touch #title h1 {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 14px;
+  font-size: clamp(34px, 12.5vw, 96px);
+  letter-spacing: 0.26em;
+  text-indent: 0.26em;
+  line-height: 1.22;
+  text-align: center;
+}
+html.touch #title .tag {
+  margin-top: 20px;
+  padding: 0 24px;
+  font-size: clamp(14px, 3.6vw, 19px);
+  line-height: 1.5;
+  text-align: center;
+}
+html.touch #title .begin {
+  margin-top: 48px;
+  font-size: 12.5px;
+}
+html.touch #loading {
+  padding: 0 20px;
+  gap: 24px;
+}
+html.touch #loading h1 {
+  font-size: clamp(26px, 9vw, 40px);
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  line-height: 1.3;
+  text-align: center;
+}
+html.touch #loading .bar {
+  width: min(220px, 60vw);
+}
+
+/* One line of figures for reading off a real device (?stats). */
+html.touch #hud .stats {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--safe-bottom) + 2px);
+  transform: translateX(-50%);
+  z-index: 9;
+  max-width: 98vw;
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 6px;
+  font: 10px/1.5 ui-monospace, 'SF Mono', Menlo, monospace;
+  color: #cfe3c8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ rail: a phone on its side */
+@media (min-aspect-ratio: 13/10) and (max-height: 540px) {
+  html.touch #hud {
+    --edge: 8px;
+    --free-top: 6px;
+    --free-bottom: calc(var(--safe-bottom) + 8px);
+  }
+  html.touch #hud .rail {
+    position: absolute;
+    left: calc(var(--safe-left) + var(--edge));
+    top: var(--edge);
+    bottom: calc(var(--safe-bottom) + var(--edge));
+    width: 150px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    pointer-events: none;
+  }
+  html.touch #hud .rail > * {
+    position: static;
+    transform: none;
+    margin: 0;
+  }
+  html.touch #hud .rail .menu-button {
+    width: 44px;
+    height: 44px;
+    pointer-events: auto;
+  }
+  html.touch #hud .rail .turn {
+    max-width: 100%;
+    min-height: 0;
+    padding: 7px 12px;
+    gap: 8px;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    border-radius: 14px;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-align: left;
+  }
+  html.touch #hud .rail .captured {
+    max-width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    padding-left: 2px;
+  }
+  html.touch #hud .rail .captured .row {
+    font-size: 15px;
+    line-height: 19px;
+  }
+  html.touch #hud .rail .actions {
+    margin-top: auto;
+  }
+  html.touch #hud .actions button,
+  html.touch #hud .hurry {
+    min-width: 76px;
+    min-height: 44px;
+    padding: 0 14px;
+  }
+  html.touch #hud .hint {
+    bottom: calc(var(--safe-bottom) + 8px);
+    width: min(46vw, 420px);
+    font-size: 11.5px;
+  }
+  html.touch #hud .overlay .card {
+    padding: 16px 20px 14px;
+  }
+  html.touch #hud .overlay p {
+    margin: 6px 0 12px;
+  }
+  html.touch #hud .overlay .choices button {
+    height: 84px;
+  }
+  html.touch #title .begin {
+    margin-top: 26px;
+  }
+  html.touch #title h1 {
+    font-size: clamp(30px, 8vw, 72px);
+  }
+}
+
+/* ------------------------------------------------------------------ bar: a tablet on its side */
+@media (min-aspect-ratio: 13/10) and (min-height: 540.02px) {
+  html.touch #hud {
+    --edge: 16px;
+    --free-top: calc(var(--safe-top) + 66px);
+    --free-bottom: calc(var(--safe-bottom) + 10px);
+  }
+  html.touch #hud .captured {
+    left: calc(var(--safe-left) + var(--edge) + 46px + 16px);
+    right: auto;
+    top: calc(var(--safe-top) + 21px);
+    margin: 0;
+    justify-content: flex-start;
+    max-width: 28vw;
+  }
+  html.touch #hud .actions {
+    left: auto;
+    right: calc(var(--safe-right) + var(--edge));
+    top: calc(var(--safe-top) + 10px);
+    bottom: auto;
+  }
+  html.touch #hud .hurry {
+    right: calc(var(--safe-right) + var(--edge) + 84px + 10px);
+    top: calc(var(--safe-top) + 10px);
+    bottom: auto;
+  }
+  html.touch #hud .hint {
+    bottom: calc(var(--safe-bottom) + 14px);
+  }
+}
+
+/* On its side, the menu is a drawer from the left rather than a sheet from below. */
+@media (min-aspect-ratio: 13/10) {
+  html.touch #hud .sheet {
+    top: 0;
+    right: auto;
+    width: min(390px, 86vw);
+    max-height: none;
+    padding: 0 18px calc(18px + var(--safe-bottom)) calc(18px + var(--safe-left));
+    border-top: none;
+    border-right: 1px solid rgba(227, 184, 102, 0.34);
+    border-radius: 0 20px 20px 0;
+    box-shadow: 18px 0 48px rgba(0, 0, 0, 0.55);
+    transform: translateX(-104%);
+  }
+  html.touch #hud .sheet-head {
+    padding-top: calc(4px + var(--safe-top));
+  }
+  html.touch #hud .sheet-head .grip {
+    display: none;
+  }
+}
+
+/* A wide tablet in portrait: the sheet need not span it. */
+@media (max-aspect-ratio: 13/10) and (min-width: 700px) {
+  html.touch #hud .sheet {
+    left: 50%;
+    right: auto;
+    width: 560px;
+    margin-left: -280px;
+  }
+  html.touch #hud {
+    --edge: 18px;
+  }
+}

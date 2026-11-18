@@ -10,6 +10,8 @@ import { GameAudio } from './audio/audio';
 import { ChessGame } from './chess/game';
 import { CameraRig } from './cinema/cameraRig';
 import { Cinema } from './cinema/cinema';
+import { classifyDevice, profileFor, readDeviceEnv } from './core/device';
+import type { Mobile } from './core/mobile';
 import { FrameLoop } from './core/loop';
 import { warmUp } from './core/warmup';
 import { installDebugApi } from './debug/api';
@@ -21,7 +23,7 @@ import { ShatterSystem } from './fx/shatter';
 import { BOARD_HALF } from './game/squares';
 import { GameController } from './game/controller';
 import { Picker } from './input/picker';
-import { ASSETS } from './pieces/assets';
+import { ASSETS, LITE_ASSETS } from './pieces/assets';
 import { Cast } from './pieces/cast';
 import { loadChessSet } from './pieces/regalia';
 import { StatueKit, type BodyKind } from './pieces/statueKit';
@@ -38,6 +40,12 @@ import { Hud, LoadingScreen } from './ui/hud';
 
 async function boot(): Promise<void> {
   const app = document.getElementById('app')!;
+  // A phone or tablet switches itself to the touch profile here, before anything is built.
+  // Its code (core/mobile.ts and what that brings in) is fetched only then: on the desktop
+  // `touch` is null from here on and the game is as it has always been.
+  const profile = profileFor(classifyDevice(readDeviceEnv()));
+  const touch = profile.touch ? await import('./core/mobile') : null;
+  touch?.prepareTouchPage(profile);
   const loading = new LoadingScreen(document.body);
 
   const scene = new THREE.Scene();
@@ -45,18 +53,25 @@ async function boot(): Promise<void> {
   scene.fog = new THREE.FogExp2(0x06080e, 0.03);
   const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.2, 150);
 
-  const pipeline = new Pipeline(scene, camera, app);
+  const pipeline = new Pipeline(scene, camera, app, profile.render);
   // Resizing clears the canvas, so redraw at once if the loop is not running (manual stepping).
   let redraw: (() => void) | null = null;
   let reflection: BoardReflection | null = null;
+  // How many pixels are drawn. The touch profile replaces these with what it measures the
+  // device can hold (core/mobile.ts); the desktop's are the constants below.
+  const sizing = { pixelRatio: (): number => Math.min(devicePixelRatio, 2), mirror: true };
+  touch?.startSmall(sizing);
   const fit = (): void => {
-    pipeline.setSize(innerWidth, innerHeight, Math.min(devicePixelRatio, 2));
+    pipeline.setSize(innerWidth, innerHeight, sizing.pixelRatio());
     const size = pipeline.renderSize;
-    reflection?.setSize(size.width, size.height);
+    // With the mirror off its buffer is not kept at size.
+    if (sizing.mirror) reflection?.setSize(size.width, size.height);
+    else reflection?.setSize(2, 2);
     redraw?.();
   };
   fit();
-  addEventListener('resize', fit);
+  // (On a touch device the profile listens for itself: a rotation is a flurry of resizes.)
+  if (!touch) addEventListener('resize', fit);
   pipeline.applyLook(DEFAULT_LOOK);
 
   // Load everything in parallel, reporting coarse progress.
@@ -68,12 +83,15 @@ async function boot(): Promise<void> {
       loading.progress(done / (steps + 1), label);
       return v;
     });
+  // (Phones and tablets load the smaller copies in assets/lite; the desktop the files it always has.)
+  const { lite, anisotropy } = profile.render;
+  const environment = lite ? `${LITE_ASSETS}/hdr/sepulchral_chapel_basement_1k.hdr` : `${ASSETS}/hdr/sepulchral_chapel_basement_2k.hdr`;
   const [kit, chess, boardMaterials, hall, hdr, physics] = await Promise.all([
-    track('Carving the statues', StatueKit.load()),
+    track('Carving the statues', StatueKit.load(profile.render.normalSize, lite)),
     track('Setting the pieces', loadChessSet()),
-    track('Laying the board', loadBoardMaterials()),
-    track('Raising the hall', createHall()),
-    track('Lighting the braziers', new HDRLoader().loadAsync(`${ASSETS}/hdr/sepulchral_chapel_basement_2k.hdr`)),
+    track('Laying the board', loadBoardMaterials({ lite, anisotropy })),
+    track('Raising the hall', createHall({ lite, anisotropy })),
+    track('Lighting the braziers', touch ? touch.loadEnvironment(environment) : new HDRLoader().loadAsync(environment)),
     track('Weighing the stone', Physics.create()),
   ]);
 
@@ -97,10 +115,18 @@ async function boot(): Promise<void> {
   scene.add(hall.group);
   const tiles = createTiles(8, boardMaterials);
   scene.add(tiles);
-  const lights = createLightRig(scene, { radius: 6.4, braziers: hall.brazierPositions, cookie: createTraceryCookie() });
+  const lights = createLightRig(scene, {
+    radius: 6.4,
+    braziers: hall.brazierPositions,
+    cookie: createTraceryCookie(profile.render.cookieSize),
+    shadowMapSize: profile.render.shadowMapSize,
+    shadowRadius: profile.render.shadowRadius,
+  });
 
   loading.progress(steps / (steps + 1), 'Teaching them to move');
-  const cast = await Cast.create(kit, chess, [...ALL_CLIPS, ...ATTACK_CLIPS, ...SPECIAL_CLIPS]);
+  // (A phone takes some seconds over the six designs: there the bar moves on after each.)
+  const paced = touch ? (built: number, of: number): Promise<void> => touch.pauseForLoading(() => loading.progress((steps + (0.7 * built) / of) / (steps + 1), 'Teaching them to move')) : undefined;
+  const cast = await Cast.create(kit, chess, [...ALL_CLIPS, ...ATTACK_CLIPS, ...SPECIAL_CLIPS], paced);
   scene.add(cast.group);
 
   const markers = new Markers();
@@ -109,7 +135,7 @@ async function boot(): Promise<void> {
   fit();
 
   const dom = pipeline.renderer.domElement;
-  const rig = new CameraRig(camera, dom);
+  const rig = new CameraRig(camera, dom, { touch: profile.touch });
   const picker = new Picker(camera, dom);
   const game = new ChessGame();
 
@@ -180,7 +206,7 @@ async function boot(): Promise<void> {
     viewerPosition: () => rig.orbitPose(viewer).position,
   });
   setCinematic(cinematic);
-  controller = new GameController({ game, cast, markers, hud, picker, rig, dom, presenter: director, sound: audio });
+  controller = new GameController({ game, cast, markers, hud, picker, rig, dom, presenter: director, sound: audio, touch: profile.touch });
   // The computer: Stockfish in a worker, loaded only once a mode needs it.
   const engine = new Engine();
   opponent = new Opponent({ controller, game, engine, hud, speed: () => director.baseSpeed });
@@ -194,6 +220,8 @@ async function boot(): Promise<void> {
   const stress = { repeat: 1 };
   const gpuTimer = new GpuTimer(pipeline.renderer.getContext() as WebGL2RenderingContext);
   const perf = new PerfRecorder();
+  // The touch profile at work (null on the desktop): installed below, once the loop exists.
+  let mobile: Mobile | null = null;
   const frame = (dt: number, now: number): void => {
     const t0 = performance.now();
     kit.shared.uTime.value = now;
@@ -212,6 +240,7 @@ async function boot(): Promise<void> {
     // Motes blur by their distance from whatever the lens is focused on.
     fx.motes.update(now, camera.position.distanceTo(pipeline.focus), pipeline.bokeh, pipeline.focusRange, pipeline.overlayUniforms.uResolution.value.y / (2 * Math.tan((camera.fov * Math.PI) / 360)));
     pipeline.overlayPass.enabled = fx.overlayActive;
+    mobile?.beforeRender();
     // With no renders asked for (a measurement stepping the game by hand), nothing is drawn at all.
     if (stress.repeat > 0) reflection?.render(pipeline.renderer);
     gpuTimer.begin();
@@ -220,11 +249,15 @@ async function boot(): Promise<void> {
     for (let i = 0; i < stress.repeat; i++) pipeline.render(dt);
     gpuTimer.end();
     if (perf.recording) perf.push({ interval: dt * 1000, cpu: performance.now() - t0, gpu: gpuTimer.lastMs });
+    mobile?.afterFrame(dt);
   };
   const loop = new FrameLoop(frame);
   redraw = () => {
     if (!loop.isRunning) frame(0, performance.now() / 1000);
   };
+  // Phones and tablets: the touch interface, the camera seated to fit the screen, and the
+  // picture sized to what the device can draw.
+  if (touch) mobile = touch.installMobile({ profile, rig, picker, director, controller, game, opponent, hud, audio, pipeline, reflection, mirrorStrength: reflection.strength, loop, cinema, shatter, fx, sizing, fit });
 
   // Compile everything, then exercise the paths a capture takes, before the reveal.
   await pipeline.renderer.compileAsync(scene, camera);
@@ -232,6 +265,8 @@ async function boot(): Promise<void> {
   const warmStart = performance.now();
   const warmed = warmUp({ pipeline, cast, fx, markers, stage: director.stage, physics });
   const boot = { warmUpMs: Math.round(performance.now() - warmStart), ...warmed };
+  // (Touch: measure the device and choose the level to draw at; take up a game left unfinished.)
+  if (mobile) await mobile.begin((what) => loading.progress(steps / (steps + 1), what));
   loop.start();
   // Only now does the computer join (it would otherwise move during the warm-up), and an
   // online game named in the address.
@@ -258,15 +293,17 @@ async function boot(): Promise<void> {
       // Round to the player's seat the short way from wherever the drift had reached.
       rig.setOrbit(rig.azimuth, seat.elevation, seat.distance, false);
       // To the player's own seat (vs computer or online), otherwise Ivory's.
-      rig.viewFor(controller.seat ?? 'w');
+      rig.viewFor(mobile?.openingSide() ?? controller.seat ?? 'w');
       titleGone();
     });
   }
 
-  installDebugApi({ scene, camera, pipeline, lights, cast, kit, loop, rig, game, controller, markers, perf, stress, director, frame, shatter, cinema, reflection, boot, engine, opponent, online });
+  installDebugApi({ scene, camera, pipeline, lights, cast, kit, loop, rig, game, controller, markers, perf, stress, director, frame, shatter, cinema, reflection, boot, engine, opponent, online, profile, mobile });
 }
 
 boot().catch((err) => {
   console.error(err);
+  // On a phone or tablet: plain words and a way to try again (below, as always, the trace).
+  if (document.documentElement.classList.contains('touch')) return void import('./core/mobile').then((m) => m.showFailure(err));
   document.body.insertAdjacentHTML('beforeend', `<pre style="position:fixed;left:12px;top:12px;z-index:99;color:#f88;font:13px monospace;white-space:pre-wrap">${String(err?.stack ?? err)}</pre>`);
 });

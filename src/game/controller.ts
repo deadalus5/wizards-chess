@@ -3,6 +3,7 @@ import type { PieceSymbol } from 'chess.js';
 import type { ChessGame, MoveEvent, Target } from '../chess/game';
 import type { CameraRig } from '../cinema/cameraRig';
 import type { Picker } from '../input/picker';
+import { resolveTap } from '../input/tapTarget';
 import type { Cast, BoardArray } from '../pieces/cast';
 import type { PieceType } from '../pieces/regalia';
 import type { Markers } from '../render/markers';
@@ -32,6 +33,8 @@ export interface ControllerDeps {
   presenter: Presenter;
   /** Sounds the controller itself is responsible for. */
   sound?: { select(position?: THREE.Vector3): void; check(): void };
+  /** A phone or tablet: fingers tap through the camera rig instead of clicking. */
+  touch?: boolean;
 }
 
 /**
@@ -55,11 +58,17 @@ export class GameController {
 
   constructor(private readonly d: ControllerDeps) {
     this.followTurn = localStorage.getItem('stonewake.follow') !== '0';
+    // On a phone or tablet a finger's tap is read by the camera rig (which tells a tap from a
+    // drag or a pinch) and resolved along its whole line of sight; fingers do not hover.
+    const fingers = d.touch === true;
+    if (fingers) d.rig.onTap = (x, y) => void this.tap(x, y);
     d.dom.addEventListener('pointerup', (e) => {
+      if (fingers && e.pointerType === 'touch') return;
       if (e.button !== 0 || d.rig.consumedClick()) return;
       void this.click(d.picker.squareAt(e.clientX, e.clientY, d.cast.living()));
     });
     d.dom.addEventListener('pointermove', (e) => {
+      if (fingers && e.pointerType === 'touch') return;
       if (d.rig.isDragging) return;
       this.hover(d.picker.squareAt(e.clientX, e.clientY, d.cast.living()));
     });
@@ -158,6 +167,41 @@ export class GameController {
     // The chosen statue stirs: veins and eyes light up.
     cast.at(square)?.wake(1.6, 5);
     this.d.sound?.select(cast.at(square)?.root.position);
+  }
+
+  /**
+   * A finger tapped the board at a point on screen. Unlike a click it is read along its whole
+   * line of sight (a legal square showing behind a statue can be reached) and a near miss is
+   * given to the one playable square beside it, then handled as a click on that square.
+   */
+  tap(clientX: number, clientY: number): Promise<void> {
+    const { picker, cast, game } = this.d;
+    const hits = picker.hitsAt(clientX, clientY, cast.living());
+    if (this.busy || !this.inputOpen || game.status().over) return this.click(hits[0]?.square ?? null);
+    const turn = game.turn();
+    const isTarget = (square: string): boolean => this.targets.some((t) => t.to === square);
+    const isOwn = (square: string): boolean => cast.at(square)?.side === turn;
+    const square = resolveTap(hits, {
+      isTarget,
+      isOwn,
+      nearby: () => {
+        const squares = new Set<string>(this.targets.map((t) => t.to));
+        for (const a of cast.living()) if (a.side === turn) squares.add(a.square);
+        const out: { square: string; distance: number }[] = [];
+        for (const sq of squares) {
+          // A statue is as likely to be touched at its middle as at its feet.
+          const mid = (cast.at(sq)?.restHeight ?? 0) / 2;
+          let distance = Infinity;
+          for (const up of mid > 0 ? [0, mid] : [0]) {
+            const p = picker.screenOf(sq, up);
+            if (p) distance = Math.min(distance, Math.hypot(p.x - clientX, p.y - clientY));
+          }
+          if (distance < Infinity) out.push({ square: sq, distance });
+        }
+        return out;
+      },
+    });
+    return this.click(square);
   }
 
   /** Handle a click on a square (also used by the debug API). */

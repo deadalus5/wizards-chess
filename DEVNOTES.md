@@ -4,7 +4,8 @@ Working notes for whoever continues this build (human or agent). The approved pl
 `~/.claude/plans/golden-kindling-moth.md` (the movement and captures session of 2026-11-17 had
 its own: `~/.claude/plans/pasted-content-id-af0a-read-devnotes-md-temporal-spring.md`; the
 computer opponent: `~/.claude/plans/add-a-computer-opponent-wiggly-metcalfe.md`; online play:
-`~/.claude/plans/read-devnotes-md-add-two-player-calm-chipmunk.md`); this file
+`~/.claude/plans/read-devnotes-md-add-two-player-calm-chipmunk.md`; phones and tablets:
+`~/.claude/plans/make-wizards-chess-work-twinkly-charm.md`); this file
 records what exists, how to verify it, the numbers already measured, and what is left. Update it
 when any of that changes.
 
@@ -14,6 +15,10 @@ when any of that changes.
   the computer against itself, or two players online with no accounts (everything lives on the
   game's links). Visual quality and motion
   come first; movement and captures must be smooth and film-like, never janky.
+- One codebase for desktop, phones and tablets (2026-11-18). The page detects a phone or tablet
+  when it loads and switches itself to a touch profile, with no button to press. **Desktop must
+  behave exactly as it did before that work**: anything for touch goes behind the profile
+  (see "Phones and tablets"), and `scripts/regress.mjs` is how "exactly" is checked.
 - On a capture the attacker physically moves in, attacks, and destroys the captured piece.
 - Chess rules come from chess.js; do not hand-roll rules. Do not write a chess engine: the
   computer is Stockfish (see "Computer opponent"), and every move it proposes is checked by
@@ -200,6 +205,59 @@ camera drifts round the hall until a click). The debug API `window.__sw` is alwa
 - **Sound** cannot be heard from here. `__sw.audioReport()` renders every sound offline, returns
   peak / RMS / timing / spectral centroid, and draws spectrograms over the page (screenshot it,
   then `__sw.hideAudioReport()`).
+
+### Desktop unchanged, and the game as a phone
+
+- `node scripts/regress.mjs capture <dir>` then `compare <a> <b>`: 20 desktop stills taken
+  with every clock stopped (the same build gives the same bytes), plus the HUD's markup, the
+  files requested and the renderer's counts. Capture before a change and after it. Known noise
+  between two captures of one build: `title.png` (its caption pulses on a CSS clock) and the
+  two late debris stills `capture-6.6` / `capture-7.4`, each above 80 dB PSNR; everything else
+  is bit-identical. A phone session in the same browser profile leaves `stonewake.*` settings
+  behind (level, deaths, quality, mode) that show up as state differences: remove them first.
+- `node scripts/mobile.mjs` drives the test browser as a phone or tablet (viewport, pixel
+  ratio, touch, user agent, safe-area insets, over CDP). The emulation lasts only as long as
+  the process that set it, so `hold <device> [--landscape] [--cpu=4]` stays attached while
+  `browser.mjs` looks at the page; `tap` / `drag` / `pinch` send real touch events. The three
+  to run after touching anything on the touch side:
+  - `check [device ...]`: each device both ways up. The profile detected with no query
+    parameter; every control on screen, inside the safe area, 44 px or more and off the board;
+    a move, a near miss, turning, pinching and sliding by touch; sound running after two taps;
+    the menu; HURRY; a reload that brings the game back; rotation; the lost-picture card.
+  - `quality`: the level measured, remembered, lower for a slower device, forced; the idle
+    pace; a still drawn with the held shadow map against one with it redrawn (after a capture,
+    an undo and a new game); the view coming back from a zoom when a move is played elsewhere;
+    the screen lock in auto-play; stepping down under load, between moves only.
+  - `webkit [device ...] [--out=dir] [--headed]`: the same game in Safari's engine
+    (`npx playwright-core install webkit` once; it goes in the Playwright cache). Playwright's
+    own iPhone and iPad descriptors, one finger only (this WebKit cannot send two).
+  `shots <dir> [device ...]` tiles the standard screens; `capture <out.png> <device>
+  <portrait|landscape> <fen> <uci> [variant]` tiles five stills of one capture through the
+  cinematic camera as that device frames it. Devices: `iphone` 393x852, `iphone-se` 375x667,
+  `android` 360x800, `ipad` 820x1180, `ipad-pro` 1024x1366, `android-tablet` 800x1280.
+- A script that leaves the test browser emulating a phone (killed mid-run, or the Mac went to
+  sleep under it) makes every later desktop check wrong. `__sw.profile.kind` should say
+  `desktop` and `<html>` should have no class.
+- On a touch page: `?stats` shows one line (profile, level, render size, frame rate, share of
+  late frames, the two timings); `?level=N` forces a level; `?calibrate` measures again
+  instead of using the remembered level; `?profile=desktop|phone|tablet` forces the profile.
+  `__sw.profile`, `__sw.mobile.state()`, `__sw.mobile.setLevel(n)`,
+  `__sw.mobile.calibrate(load)` (load multiplies the timings, to stand in for a slower device).
+- **A real phone:** `npx vite --host --port 5174` (a second server; 5173 is left to the other
+  sessions) and open `http://<this Mac's address>:5174/?stats` on the same Wi-Fi. Over plain
+  http a browser withholds the share sheet, the wake lock and the clipboard; those need https
+  (the Pages build).
+  - **Start it in the project root.** Started in a subfolder such as `server/`, npx still
+    finds this project's Vite but serves that folder: every page is an empty `404`, which a
+    phone shows as a blank white screen (this happened on the first trial, 2026-11-18).
+    `curl -i http://<address>:5174/` should say `200`.
+  - The phone's console will show `WebSocket connection to ws://<address>:5173 failed`: that
+    is Vite's hot-reload client, which `vite.config.ts` pins to port 5173 for the devtools
+    proxy. The game is not affected; an edit needs a reload by hand on the phone.
+  - The first load from a dev server is slow (hundreds of separate files): 11 to 18 s in
+    Playwright's WebKit on this Mac against a server just started, with the loading screen up
+    meanwhile. At the LAN address (not a secure context) it was checked there only: loading
+    screen, title, tap, board.
 
 ### After changing a statue's shape
 
@@ -416,6 +474,42 @@ and the fracture both read. Run these before and after, and compare:
     head at about (-0.4, 0.45, 0.7); queen's blades to (-0.18, 1.29, 0.54) and (-0.09, 1.20,
     0.63); knight's sword tip (-0.29, 0.34, 0.69); pawn's spear and bishop's staff upright at
     0.2-0.3 forward.
+- **Phones and tablets (2026-11-18). Everything in this list but its first entry is emulation
+  on this Mac, which says nothing about how fast or how heavy the game is on a real device.**
+  - **First real phone** (the owner's, from the dev server over Wi-Fi; its model and the rest
+    of the `?stats` line were not recorded): it loads and plays well by touch, **at only 16
+    to 19 frames a second**. That is 50 to 60 ms a frame, three to four refreshes of a 60 Hz
+    screen, against budgets of 12.5 ms (for 60) and 26 ms (for 30). Why, and what to change:
+    "Not done yet", item 4.
+  - Desktop after the work, against a capture taken before it: 19 of 20 stills bit-identical
+    (`title.png` at 89 dB, its pulsing caption), HUD markup, files requested and renderer
+    counts identical; `verify.mjs 1 20` consistent over 30 games; hover, click to move, Space,
+    Escape, drag to orbit and the wheel exercised by real mouse events. A desktop page has no
+    `touch` class, no touch style sheet and no `__sw.mobile`. `__sw.headroom()` was not
+    measured again afterwards.
+  - Tests: 163 in 17 files (95 before; 68 new, all on the pure parts).
+  - Build: the touch wiring is its own chunk, fetched only by a touch device: 14.9 kB of
+    script and 17.9 kB of style (6.7 and 3.9 gzipped) beside the 701 kB main chunk.
+  - Weight as an emulated iPhone (dev server): 79 files and 10.8 MB decoded, every texture
+    from `assets/lite/` (4.1 MB on disk), against about 81 MB for the desktop. In a fresh tab
+    the desktop holds a 26 MB script heap and 169 MB of buffers, the touch profile 28 and
+    61 MB. (Measure in a fresh tab: pages kept in the back/forward cache are counted too, and
+    once made the heap look 96 MB bigger than it was.) GPU memory itself was not measured.
+  - Seats (`mobile.mjs check`): iPhone 393x852 upright lens 62 degrees, 23.9 m, 54 degrees
+    up, a square 37 px wide, drawn at 831x1803; on its side 30 / 19.5 m / 44 with the aim
+    0.84 m low, 47 px. iPad 820x1180 upright 46.6 / 22.5 m / 52.5, 75 px, 1236x1779; on its
+    side 30 / 20.5 m / 44, 92 px.
+  - Level chosen (`mobile.mjs quality`, emulated iPhone): this Mac measures level 1 of 8
+    (the full picture at 0.7 MP in 2.6 ms, 1.4 ms without the mirror and AO; at these speeds
+    the timings are mostly noise). With the timings multiplied to
+    stand in for slower devices: x8 gives level 3, x14 level 5 (30 a second), x24 and x40
+    level 8. Under a load added while playing the governor stepped from 2 to 3, once, between
+    moves. Idle falls to 30 a second and comes back on a touch.
+  - Safari's engine (Playwright WebKit 27.2, iPhone 15 Pro and iPad Pro 11 descriptors, both
+    ways up, dev server and the production bundle): starts in about 6 s with no console
+    errors, level 1 of 8, draws 945x1585 and 1239x1774, plays a tapped move and a capture.
+    It has `OffscreenCanvas`, float and half-float render targets, the share sheet and the
+    wake lock; it has no canvas `filter`, so the tracery cookie takes its shadow-blur path.
 
 ## What exists
 
@@ -705,6 +799,91 @@ and the fracture both read. Run these before and after, and compare:
   markers are hidden in that pass. `__sw.reflection.strength = 0` switches it off.
 - The camera's swing to the other seat (`CameraRig.viewFor`) is an eased turn of up to two
   seconds; dragging cancels it.
+- **Phones and tablets** (2026-11-18). One codebase; the page decides what it is on at the top
+  of `boot()` and a touch device gets a touch profile with nothing to press.
+  - **The profile** (`src/core/device.ts`, pure): `classifyDevice` answers `desktop`, `phone`
+    or `tablet` from the user agent (iPhone, iPad, Android; a `Macintosh` with more than one
+    touch point is an iPad), and for anything else from touch with a coarse pointer and no
+    hover, phone or tablet by the shorter screen side (600 px). A touch laptop with a mouse
+    stays desktop. `DESKTOP_RENDER` holds the literals the desktop has always used,
+    `TOUCH_RENDER` the lighter ones.
+  - **How desktop stays as it was.** `main.ts` does `profile.touch ? await
+    import('./core/mobile') : null`, so the touch wiring and its style sheet are a chunk a
+    desktop never fetches. `hud.ts`, `hud.css` and `index.html` were not edited. Every touch
+    rule is under `html.touch`. Every new parameter defaults to the desktop's old literal
+    (`Pipeline` settings, `createLightRig` shadow size, `createHall` / `loadBoardMaterials`
+    quality, `StatueKit.load`, `createNormalArray`). The rig and controller take fingers only
+    for `pointerType === 'touch'` and only with their `touch` option. `chooseShot`'s default
+    style is `WIDE_SHOT`, the old constants, pinned by a golden test ("still chooses the shots
+    it always chose"). `FrameLoop.cap` is null on desktop. Keep to this when adding to either
+    side.
+  - **Fingers.** `input/gestures.ts` (pure) turns pointers into: one finger turning the view
+    (after 10 px), two zooming and sliding it, and whether a press was a tap (never once a
+    second finger has been down). `CameraRig` applies them; how far the view can slide grows
+    with the zoom (`slideLimit`), so pinching out always returns to the whole board, and a
+    move played off screen brings the view back (`recentre`). A tap goes to
+    `GameController.tap`: `Picker.hitsAt` gives everything along the line of sight and
+    `resolveTap` (`input/tapTarget.ts`, pure) picks the first playable thing, lets a grazed
+    own statue give way to a legal square behind it, and gives a near miss (24 px) to the one
+    playable square beside it, never when two are as near. `Director.hurry()` is what Space
+    does; the HURRY button calls it.
+  - **The seat** (`cinema/seat.ts`, pure): `seatFor(width, height, insets)` gives the lens,
+    height and distance from which the whole board and its statues fit in what the interface
+    leaves free. It opens the lens (to 62 degrees) before it steps back, and on a wide screen
+    aims a little off the board's middle to centre it between unequal bars. Recomputed on
+    rotation and resize (debounced, with `visualViewport`).
+  - **The interface** (`ui/touchChrome.ts`, `ui/hud.touch.css`) re-homes the elements `Hud`
+    already made. On the board: a menu button, the turn pill, the fallen pieces, UNDO, and
+    HURRY while a move plays. Three arrangements by media query: bands above and below (tall
+    and near-square screens), a rail down the left (a phone on its side), a bar along the top
+    (a tablet on its side). The menu is `.leftcol` as a sheet from the bottom or a drawer from
+    the left, with NEW GAME and RESIGN moved into it and the moves list under the options.
+    Controls are 44 px or more and keep inside the safe-area insets. Invite links get SEND
+    (the system share sheet) where there is one.
+  - **Lighter assets** (`scripts/make-lite-assets.sh`, ffmpeg, output committed in
+    `public/assets/lite/`, 21 files): board maps at 1024, hall maps at 512, the statues'
+    normal maps at 1024 as 4:4:4 JPEG, the environment at 1k. Re-run the script if a source
+    texture changes. With them: a 2048 shadow map (4096 on desktop), anisotropy 4, a 512
+    cookie, FXAA in place of SMAA, the normal array's CPU copy released after upload, and
+    a failed download retried up to three times.
+  - **The picture's level** (`core/quality.ts` and `core/calibrate.ts`, pure; wired in
+    `core/mobile.ts`). Eight levels, megapixels phone / tablet:
+
+    | Level | Pixels | Mirror | AO | Rate |
+    |---|---|---|---|---|
+    | 1 | 1.5 / 2.2 | on | Medium | 60 |
+    | 2 | 1.5 / 2.2 | off | Medium | 60 |
+    | 3 | 1.2 / 1.7 | off | Medium | 60 |
+    | 4 | 0.95 / 1.3 | off | Performance | 60 |
+    | 5 | 1.5 / 2.2 | off | Medium | 30 |
+    | 6 | 1.2 / 1.7 | off | Performance | 30 |
+    | 7 | 0.95 / 1.3 | off | Performance | 30 |
+    | 8 | 0.7 / 0.9 | off | off, no depth of field | 30 |
+
+    Behind the loading screen the game times a staged close-up four ways (the full picture at
+    two sizes, without the mirror, without the mirror or AO; each finished with a one-pixel
+    `readPixels`), fits a cost per megapixel and per feature, and takes the first level
+    predicted to fit 12.5 ms (for 60) or 26 ms (for 30). The answer is kept for three days
+    (`stonewake.quality`, per device kind, pixel ratio and screen). A page loaded in the
+    background is not measured and takes level 3. While playing, the `Governor` only steps
+    down, between moves, after two runs of 180 frames with more than 15 % late, and only if
+    timing a few frames then shows the picture itself is over budget; otherwise it waits
+    3600 frames (lateness that is not the picture's doing, such as a busy phone, changes
+    nothing).
+  - **Pace.** `FrameLoop.cap` holds 60 or 30; with nothing moving for 0.6 s the pace drops to
+    30 and returns on a touch. The shadow map is redrawn only while something that casts a
+    shadow can move (a move playing, rubble or shards alive, four frames after).
+  - **Captures on a tall screen.** `chooseShot` takes a `ShotStyle`; `TALL_SHOT` (a 36 degree
+    lens, three-quarter views from behind the attacker, 7 % bars) is used when the screen is
+    taller than wide, and the blur is sized to the frame.
+  - **Living on a phone.** Sound is started on a finger lifting (a touch coming down is not a
+    gesture a browser will start sound on) and again when the page returns. A game passed
+    between two players or against the computer is saved after every move
+    (`stonewake.game`, `game/saved.ts`) and restored with `loadMoves`. The screen is kept
+    awake during auto-play. A lost WebGL context shows a card that reloads. iOS kills a page
+    that uses too much memory without telling it: a marker (`stonewake.alive`) still set at
+    load means the last visit died in view, and the game then starts two levels lower with a
+    1024 shadow map (`stonewake.deaths`).
 - Conventions: square = 1.25 m; files along +x; White's back rank at +z, White faces -z (yaw pi).
 
 ## Not done yet (in the order planned)
@@ -713,10 +892,11 @@ and the fracture both read. Run these before and after, and compare:
    spreading before the final blow, a second camera angle on the hit. The library has only two
    heavy two-handed clips (overhead and side swing); between them they serve the pawn, bishop,
    rook and king, so more variety than this needs new clips.
-2. **Polish not done:** light shaft, head look-at, quality presets for slower machines (render
-   scale is fixed at the device pixel ratio, capped at 2; the reflection and depth of field
-   have no off switch in the interface), tests for fracture closedness, a layout for windows
-   narrower than about 1000 px (the buttons wrap over the board).
+2. **Polish not done:** light shaft, head look-at, quality presets for slower desktop machines
+   (there the render scale is fixed at the device pixel ratio, capped at 2, and the
+   reflection and depth of field have no off switch; the measured levels exist for the touch
+   profile only), tests for fracture closedness, a layout for desktop windows narrower than
+   about 1000 px (the buttons wrap over the board; the touch layout is not used there).
 3. **Online, not done:** not yet tried across two machines or through real networks (the
    deployed relay passes `relay:check`; the two-window tests ran against `wrangler dev`). No clocks, no spectators, no draw
    offers, no chat. Anyone holding a link plays that seat (by design: the link is the
@@ -724,12 +904,63 @@ and the fracture both read. Run these before and after, and compare:
    the tab is open (a closed tab would need a service worker and Web Push). No rate limiting
    on `POST /games` beyond Cloudflare's own and the free plan's daily quota. Resignation has
    no cinematic of its own (the card only).
-4. **Not verified:** Safari and Firefox (everything was checked in Chromium only); a real
+4. **Phones and tablets, not done or not known:**
+   - **Frame rate on a real phone: 16 to 19 a second on the first one tried (2026-11-18). Not
+     fixed.** The promise of "an even 60, or an even 30" is not kept there. Read from the
+     code; which part dominates on the phone has not been measured:
+     - No level reduces the work that is the same at every level. The 32 statues are 20-34
+       thousand triangles each (0.87 million), skinned, and drawn for the picture, again for
+       the shadow map while anything moves, and again for the mirror at level 1. All 32
+       skeletons are recomputed and uploaded every frame though 30 of them stand still, and
+       the statues are never culled (`frustumCulled = false` in `buildPiece.ts`). The levels
+       trade only pixels, the mirror, AO and depth of field: the design assumed pixels
+       dominate, which holds on this Mac and was never tested on a phone.
+     - A sign of it here already: in Playwright's WebKit the measured frame took 3-6 ms and
+       the same at 0.7 and 1.5 megapixels.
+     - The level is chosen from under a second of flat-out drawing at load, without the
+       game's own update (2.3 ms a frame on this Mac), on a cool phone: optimistic.
+     - The governor counts only frames in motion, wants 360 of them late, steps one level,
+       rests 300, and what it learns is not saved: in a short session it barely moves.
+     - To tell the causes apart on the device: the whole `?stats` line and the model;
+       `&level=8` (if the rate hardly changes, it is the fixed work); on an iPhone, Low
+       Power Mode halves the browser's frame rate.
+
+     Suggested changes, by expected gain. The first three are what could give a steady 30;
+     the last two only help if the level was chosen too high.
+     1. Lighter statue meshes in the touch profile, the full ones kept for close-ups (the
+        fracture and the capture planner read the mesh, so a victim needs its full one by
+        the blow).
+     2. Do not re-pose statues that are standing still: skip their skeleton update and
+        upload, or draw them as static geometry.
+     3. Cheaper shadows during a move: redraw only the moving statues over a kept map of
+        the rest, or every second frame.
+     4. Measure real frames in the first seconds of play, drop several levels at once, count
+        frames at rest too, and remember where the governor ends.
+     5. Lower levels that cut fixed cost: bloom off, AO off sooner.
+   - **Only one real device has run it, and only for frame rate.** Layout, touch and the level
+     logic were checked in Chromium's device emulation and in Playwright's WebKit, both on
+     this Mac's GPU. Still not known: whether iOS kills the page for memory (the plan's
+     estimate was 700 MB to 1 GB of GPU memory for the desktop set; the lite set was sized
+     to stay well under the few hundred megabytes at which that is reported), heat over a
+     long game, sound, a tablet, and the https-only features (share sheet, wake lock).
+   - Loading on a slow processor was not timed (the plan called for 4x and 6x throttling).
+     After the download this Mac spends about 2.3 s building the statues and warming up; a
+     mid-range Android may be four times slower, with the bar standing still meanwhile.
+   - The lite textures were looked at in the phone and tablet stills but not set side by side
+     with the full ones at the same size.
+   - The first paint of the loading screen waits for the main script (701 kB), because
+     `index.html` was left alone; on a slow connection the page is blank until then.
+   - Two-finger gestures have not been tried in WebKit (Playwright's cannot send them), only
+     in Chromium.
+   - Left out on purpose: installing to the home screen (manifest, icons), haptics, a
+     fullscreen switch, lower-detail statue meshes, GPU-compressed textures.
+5. **Not verified:** desktop Safari and Firefox (the desktop was checked in Chromium only; the
+   touch profile also in Playwright's WebKit); a real
    120 Hz display (the pacing logic is unit-tested, the test browser runs at 60 Hz); how any of
    the sound actually sounds (none of it has been heard, only measured). In the movement
    and captures session every attack was looked at as stills and every kind of victim was seen
    struck, about 30 of the 60 pairings; the rest are checked by number only (`strikes()`).
-5. Known rough edges:
+6. Known rough edges:
    - The knight's second attack (leap, land, cut) is the weakest of the twelve: two beats with
      a landing between them, and a swing so wide that it is shut out whenever anyone stands near.
    - Variation thins out in a crowd. An attack whose weapon would pass through a bystander is

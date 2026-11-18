@@ -26,6 +26,14 @@ export class Cinema {
   enabled = true;
   /** Fixed scenery the camera must not sit inside or shoot through. */
   scenery: Obstacle[] = [];
+  /**
+   * Size the blur of a shot by the scene (the height of the frame at the pair, in metres)
+   * rather than by the picture's pixels. Off on the desktop, whose picture the blur was tuned
+   * on; on for phones and tablets, whose pictures are a different size with every level and
+   * every turn of the device.
+   */
+  blurByFrame = false;
+  private shotStyle: ShotStyle = WIDE_SHOT;
   private letterbox = 0;
   private letterboxGoal = 0;
   private bokeh = 0;
@@ -45,9 +53,20 @@ export class Cinema {
     return this.letterboxGoal > 0;
   }
 
+  /** How two-shots are composed (the wide shot unless a tall screen has been given another); the bars follow it. */
+  get style(): ShotStyle {
+    return this.shotStyle;
+  }
+
+  set style(style: ShotStyle) {
+    if (style === this.shotStyle) return;
+    this.shotStyle = style;
+    this.pipeline.letterbox.barSize = style.bar;
+  }
+
   /** Frame an attacker standing at `attacker` and a victim at `victim`. */
   twoShot(attacker: THREE.Vector3, victim: THREE.Vector3, viewer: THREE.Vector3, attackerHeight: number, victimHeight: number, top: number, statues: Obstacle[]): Shot {
-    return chooseShot(attacker, victim, viewer, attackerHeight, victimHeight, top, this.pipeline.camera.aspect, [...statues, ...this.scenery]);
+    return chooseShot(attacker, victim, viewer, attackerHeight, victimHeight, top, this.pipeline.camera.aspect, [...statues, ...this.scenery], this.shotStyle);
   }
 
   /** Cut to a shot. */
@@ -96,6 +115,8 @@ export class Cinema {
       shot.position.y += this.boom;
       shot.target.copy(base.target);
       shot.target.y += this.boom * 0.92;
+      // (Every frame: a resize in the middle of a shot puts the blur back to texels.)
+      if (this.blurByFrame) this.pipeline.setBlurFrame(2 * shot.position.distanceTo(this.pipeline.focus) * Math.tan((shot.fov * Math.PI) / 360));
     }
   }
 
@@ -132,6 +153,65 @@ const FOV = 26;
 /** Fraction of the frame height hidden by each letterbox bar. */
 const BAR = 0.115;
 
+/** How a two-shot is composed: the lens, the bars, and where round the pair the camera would rather be. */
+export interface ShotStyle {
+  /** Vertical field of view, in degrees. */
+  fov: number;
+  /** Fraction of the frame height hidden by each letterbox bar. */
+  bar: number;
+  /**
+   * Angles round from the pair's side to try, in degrees: 0 is square on to the line between
+   * the two; positive swings round behind the attacker, looking past it at the victim.
+   */
+  azimuths: readonly number[];
+  /** Camera heights to try, as multiples of the taller figure, most wanted first. */
+  heights: readonly number[];
+  /** Metres of width the frame must hold when the two stand `span` apart, seen from an angle. */
+  wide(span: number, azimuth: number): number;
+  /** How much an angle is disliked (added to the score; a fully blocked sight line adds 4). */
+  bias(azimuth: number): number;
+  /** Metres the middle of the frame is moved from between the two towards the victim. */
+  towardVictim: number;
+  /** Weight against looking out of the board into the hall when the pair is near its edge. */
+  outward: number;
+  /** Weight against the attacker itself standing in front of the victim (0: from the side it cannot). */
+  selfBlock: number;
+}
+
+/** The desktop's shot, and any wide screen's: the pair in profile on a long lens, under cinema bars. */
+export const WIDE_SHOT: ShotStyle = {
+  fov: FOV,
+  bar: BAR,
+  azimuths: [0, 18, -18, 36, -36, 54, -54],
+  heights: [0.78, 1.25, 1.9, 2.9],
+  wide: (span) => span + 3.2,
+  bias: (azimuth) => Math.abs(azimuth) * 0.03,
+  towardVictim: 0,
+  outward: 3,
+  selfBlock: 0,
+};
+
+/**
+ * For a screen taller than it is wide (a phone or tablet held upright). Two figures side by
+ * side cannot fill a tall frame: at the long lens's angle the camera would have to stand over
+ * twenty metres off to fit them across. So the camera comes round towards the attacker's
+ * shoulder, where the pair stand one beyond the other and the board runs away up the frame;
+ * the lens is a little wider, the bars slimmer, and the frame leans towards the one about to
+ * break. It never comes so far round that the attacker hides its victim.
+ */
+export const TALL_SHOT: ShotStyle = {
+  fov: 36,
+  bar: 0.07,
+  azimuths: [46, 34, 58, 22, -46, -34, 0],
+  heights: [1.25, 0.78, 1.9, 2.9],
+  wide: (span, azimuth) => span * Math.abs(Math.cos((azimuth * Math.PI) / 180)) + 2.0,
+  bias: (azimuth) => Math.abs(azimuth - 46) * 0.03 + (azimuth < 0 ? 1 : 0),
+  towardVictim: 0.25,
+  // Little of the hall shows round a tall frame's subject.
+  outward: 1,
+  selfBlock: 4,
+};
+
 /**
  * Pick a two-shot of attacker and victim: a profile view on a long lens, a little above eye
  * level so the board recedes behind the pair. It prefers to look across the board rather than
@@ -140,8 +220,10 @@ const BAR = 0.115;
  * nothing stands in front of the pair; a high view over everyone's heads is the last resort.
  *
  * `top` is the highest thing that must stay in frame (a raised weapon, or the taller head).
+ * `style` is the composition: the default is the wide shot described above, as it has always
+ * been; a tall screen is given `TALL_SHOT`.
  */
-export function chooseShot(attacker: THREE.Vector3, victim: THREE.Vector3, viewer: THREE.Vector3, attackerHeight: number, victimHeight: number, top: number, aspect: number, obstacles: Obstacle[]): Shot {
+export function chooseShot(attacker: THREE.Vector3, victim: THREE.Vector3, viewer: THREE.Vector3, attackerHeight: number, victimHeight: number, top: number, aspect: number, obstacles: Obstacle[], style: ShotStyle = WIDE_SHOT): Shot {
   const mid = new THREE.Vector3().addVectors(attacker, victim).multiplyScalar(0.5);
   const axis = new THREE.Vector3().subVectors(victim, attacker).setY(0);
   const span = axis.length();
@@ -156,10 +238,10 @@ export function chooseShot(attacker: THREE.Vector3, victim: THREE.Vector3, viewe
   const floorMargin = 0.32;
   const headroom = 0.18;
   const tall = top + headroom + floorMargin;
-  const tanHalf = Math.tan((FOV * Math.PI) / 360);
-  const visible = 1 - 2 * BAR;
-  const wide = span + 3.2;
-  const distance = Math.max(tall / (2 * tanHalf * visible), wide / (2 * tanHalf * aspect));
+  const tanHalf = Math.tan((style.fov * Math.PI) / 360);
+  const visible = 1 - 2 * style.bar;
+  /** How far off the camera stands to hold the pair, top to toe and side to side, from an angle. */
+  const distanceAt = (azimuth: number): number => Math.max(tall / (2 * tanHalf * visible), style.wide(span, azimuth) / (2 * tanHalf * aspect));
   const targetY = (top + headroom - floorMargin) / 2;
 
   const points: [number, number, number][] = [
@@ -180,10 +262,13 @@ export function chooseShot(attacker: THREE.Vector3, victim: THREE.Vector3, viewe
   let bestScore = Infinity;
   const p = new THREE.Vector3();
   const view = new THREE.Vector3();
+  /** The attacker as something that can be in the way of its victim. */
+  const self: Obstacle[] = [{ x: attacker.x, z: attacker.z, radius: 0.4, height: attackerHeight }];
   // Camera height as a multiple of the taller figure: just above eye level first.
-  const heights = [0.78, 1.25, 1.9, 2.9];
+  const heights = style.heights;
   for (const sideSign of [1, -1]) {
-    for (const azimuth of [0, 18, -18, 36, -36, 54, -54]) {
+    for (const azimuth of style.azimuths) {
+      const distance = distanceAt(azimuth);
       for (let e = 0; e < heights.length; e++) {
         const y = h * heights[e];
         const horizontal = Math.sqrt(Math.max(distance * distance - (y - targetY) * (y - targetY), 4));
@@ -193,11 +278,13 @@ export function chooseShot(attacker: THREE.Vector3, victim: THREE.Vector3, viewe
           .addScaledVector(side, sideSign * Math.cos(a) * horizontal)
           .addScaledVector(axis, -Math.sin(a) * horizontal);
         p.y = y;
-        let score = Math.abs(azimuth) * 0.03 + e * 1.5 + (sideSign < 0 ? 1.2 : 0);
+        let score = style.bias(azimuth) + e * 1.5 + (sideSign < 0 ? 1.2 : 0);
         // Looking outwards from near the edge of the board puts the pair against a void.
         view.set(mid.x - p.x, 0, mid.z - p.z).normalize();
-        score += Math.max(0, view.dot(out)) * outward * 3;
+        score += Math.max(0, view.dot(out)) * outward * style.outward;
         for (const q of points) score += blockers(p.x, p.y, p.z, q[0], q[1], q[2], obstacles) * 4;
+        // From round behind it, the attacker can stand between the camera and its victim.
+        if (style.selfBlock > 0) for (const q of [points[2], points[3]]) score += blockers(p.x, p.y, p.z, q[0], q[1], q[2], self) * style.selfBlock;
         // A statue close to the lens fills a slab of the frame with blur.
         const range = Math.hypot(mid.x - p.x, mid.z - p.z);
         for (const o of obstacles) {
@@ -218,7 +305,8 @@ export function chooseShot(attacker: THREE.Vector3, victim: THREE.Vector3, viewe
       }
     }
   }
-  const position = best ?? mid.clone().addScaledVector(side, distance).setY(h * 1.7);
+  const position = best ?? mid.clone().addScaledVector(side, distanceAt(0)).setY(h * 1.7);
   const target = mid.clone().setY(targetY);
-  return { pose: { position, target, fov: FOV }, focus: mid.clone().setY(h * 0.6) };
+  if (style.towardVictim !== 0) target.addScaledVector(axis, style.towardVictim);
+  return { pose: { position, target, fov: style.fov }, focus: mid.clone().setY(h * 0.6) };
 }

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { Rng } from '../core/math';
 import { SQUARE } from '../game/squares';
-import { ASSETS, loadTexture } from '../pieces/assets';
+import { ASSETS, LITE_ASSETS, loadTexture } from '../pieces/assets';
 import { reflectionUniforms } from './reflection';
 
 export const TILE_HEIGHT = 0.16;
@@ -12,13 +12,21 @@ const MARBLE_SPAN = 2.6;
 
 export type PbrSource = 'ambientcg' | 'polyhaven';
 
+/** Which copies of a texture set to load, and how sharply to filter them at a glancing angle. */
+export interface TextureQuality {
+  /** The smaller copies in assets/lite (phones and tablets). */
+  lite?: boolean;
+  anisotropy?: number;
+}
+
 /** A PBR material from one of the downloaded texture sets. */
-export async function loadPbrMaterial(id: string, source: PbrSource, params: THREE.MeshStandardMaterialParameters = {}): Promise<THREE.MeshStandardMaterial> {
-  const base = `${ASSETS}/textures/${id}`;
+export async function loadPbrMaterial(id: string, source: PbrSource, params: THREE.MeshStandardMaterialParameters = {}, quality: TextureQuality = {}): Promise<THREE.MeshStandardMaterial> {
+  const base = `${quality.lite ? LITE_ASSETS : ASSETS}/textures/${id}`;
+  const anisotropy = quality.anisotropy ?? 16;
   const [map, normalMap, packed] = await Promise.all([
-    loadTexture(`${base}/diff.jpg`, { srgb: true, repeat: true, anisotropy: 16 }),
-    loadTexture(`${base}/nor_gl.jpg`, { repeat: true, anisotropy: 16 }),
-    loadTexture(`${base}/${source === 'ambientcg' ? 'rough' : 'arm'}.jpg`, { repeat: true, anisotropy: 16 }),
+    loadTexture(`${base}/diff.jpg`, { srgb: true, repeat: true, anisotropy }),
+    loadTexture(`${base}/nor_gl.jpg`, { repeat: true, anisotropy }),
+    loadTexture(`${base}/${source === 'ambientcg' ? 'rough' : 'arm'}.jpg`, { repeat: true, anisotropy }),
   ]);
   const material = new THREE.MeshStandardMaterial({ map, normalMap, roughnessMap: packed, roughness: 1, metalness: 0, ...params });
   if (source === 'polyhaven') material.aoMap = packed;
@@ -100,10 +108,10 @@ function softenLightHighlights(material: THREE.MeshStandardMaterial, floor = 0.4
   material.customProgramCacheKey = () => `board-v3-${floor}`;
 }
 
-export async function loadBoardMaterials(): Promise<BoardMaterials> {
+export async function loadBoardMaterials(quality: TextureQuality = {}): Promise<BoardMaterials> {
   const [light, dark] = await Promise.all([
-    loadPbrMaterial('Marble014', 'ambientcg', { roughness: 0.55 }),
-    loadPbrMaterial('Marble009', 'ambientcg', { roughness: 0.5 }),
+    loadPbrMaterial('Marble014', 'ambientcg', { roughness: 0.55 }, quality),
+    loadPbrMaterial('Marble009', 'ambientcg', { roughness: 0.5 }, quality),
   ]);
   softenLightHighlights(light);
   softenLightHighlights(dark);

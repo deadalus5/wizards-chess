@@ -50,13 +50,28 @@ export class Director implements Presenter {
     addEventListener('keydown', (e) => {
       if (e.code === 'Space' && this.timeline) {
         e.preventDefault();
-        this.speed = Math.max(6, this.baseSpeed);
+        this.hurry();
       }
     });
   }
 
+  /** Play the rest of the move in flight quickly (the Space key; the HURRY button on a touch screen). */
+  hurry(): void {
+    if (this.timeline) this.speed = Math.max(6, this.baseSpeed);
+  }
+
   get playing(): boolean {
     return this.timeline !== null;
+  }
+
+  /** Seconds of the move in flight still to play (0 when idle). */
+  get remaining(): number {
+    return this.timeline ? Math.max(0, this.timeline.duration - this.timeline.time) : 0;
+  }
+
+  /** Whether the move in flight is being hurried along. */
+  get hurried(): boolean {
+    return this.timeline !== null && this.speed > Math.max(1.01, this.baseSpeed);
   }
 
   /** Seconds into the move being played (0 when idle). */

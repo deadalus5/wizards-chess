@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Rng } from '../core/math';
 import { BOARD_HALF } from '../game/squares';
-import { loadPbrMaterial, TILE_HEIGHT } from './board';
+import { loadPbrMaterial, TILE_HEIGHT, type TextureQuality } from './board';
 const FRAME_WIDTH = 0.55;
 const STEP_HEIGHT = 0.22;
 /** Height of the hall floor relative to the top of the board. */
@@ -113,10 +113,13 @@ function brazierGeometry(): { stand: THREE.BufferGeometry; coals: THREE.BufferGe
  * A window-tracery cookie for the key light: the board sits in a pool of moonlight crossed by
  * the soft shadows of stone mullions.
  */
-export function createTraceryCookie(size = 1024): THREE.Texture {
+export function createTraceryCookie(size = 1024, soften?: 'filter' | 'shadow'): THREE.Texture {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
+  // Safari's canvas has no filters. There the soft bars are drawn as the blurred shadows of
+  // bars that are themselves drawn off the canvas. (`soften` forces one way, for comparing.)
+  const filtered = soften ? soften === 'filter' : typeof ctx.filter === 'string';
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, size, size);
   const c = size / 2;
@@ -129,8 +132,17 @@ export function createTraceryCookie(size = 1024): THREE.Texture {
   ctx.fillStyle = pool;
   ctx.fillRect(0, 0, size, size);
   // Mullions: soft dark bars and the arcs of a rose window.
-  ctx.filter = `blur(${size * 0.012}px)`;
-  ctx.strokeStyle = 'rgba(0,0,0,0.62)';
+  if (filtered) {
+    ctx.filter = `blur(${size * 0.012}px)`;
+    ctx.strokeStyle = 'rgba(0,0,0,0.62)';
+  } else {
+    ctx.strokeStyle = '#000';
+    ctx.shadowColor = 'rgba(0,0,0,0.62)';
+    // A shadow's blur is twice the standard deviation a blur filter is given.
+    ctx.shadowBlur = size * 0.024;
+    ctx.shadowOffsetX = size * 2;
+    ctx.translate(-size * 2, 0);
+  }
   ctx.lineCap = 'round';
   ctx.lineWidth = size * 0.022;
   for (const x of [-0.3, -0.1, 0.1, 0.3]) {
@@ -156,7 +168,11 @@ export function createTraceryCookie(size = 1024): THREE.Texture {
     ctx.arc(c + Math.cos(a) * size * 0.12, c - size * 0.1 + Math.sin(a) * size * 0.12, size * 0.12, 0, Math.PI * 2);
     ctx.stroke();
   }
-  ctx.filter = 'none';
+  if (filtered) ctx.filter = 'none';
+  else {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.shadowColor = 'transparent';
+  }
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.name = 'tracery-cookie';
@@ -164,12 +180,12 @@ export function createTraceryCookie(size = 1024): THREE.Texture {
 }
 
 /** The hall around the board: frame, stepped dais, floor, a ring of pillars and four braziers. */
-export async function createHall(): Promise<Hall> {
+export async function createHall(quality: TextureQuality = {}): Promise<Hall> {
   const [frameMat, stepMat, floorMat, pillarMat] = await Promise.all([
-    loadPbrMaterial('Marble006', 'ambientcg', { roughness: 0.75 }),
-    loadPbrMaterial('medieval_blocks_05', 'polyhaven', { color: 0x6f6a66 }),
-    loadPbrMaterial('monastery_stone_floor', 'polyhaven', { color: 0x6a665f }),
-    loadPbrMaterial('medieval_blocks_05', 'polyhaven', { color: 0x8a847c }),
+    loadPbrMaterial('Marble006', 'ambientcg', { roughness: 0.75 }, quality),
+    loadPbrMaterial('medieval_blocks_05', 'polyhaven', { color: 0x6f6a66 }, quality),
+    loadPbrMaterial('monastery_stone_floor', 'polyhaven', { color: 0x6a665f }, quality),
+    loadPbrMaterial('medieval_blocks_05', 'polyhaven', { color: 0x8a847c }, quality),
   ]);
   const group = new THREE.Group();
   group.name = 'hall';

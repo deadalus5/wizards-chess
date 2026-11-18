@@ -100,6 +100,75 @@ describe('FrameLoop', () => {
     for (const s of settled) expect(Math.abs(s - 16.67)).toBeLessThan(0.3);
   });
 
+  describe('under a cap (phones and tablets)', () => {
+    const capped = (hz: number, cap: number, frames = 300): { steps: number[]; loop: FrameLoop } => {
+      const times: number[] = [];
+      // A little jitter in the callback times, as a real display has.
+      for (let i = 0; i < frames; i++) times.push(1000 + (i * 1000) / hz + (i % 5 === 1 ? 0.6 : i % 7 === 3 ? -0.5 : 0));
+      return run(times, (loop) => {
+        loop.auto = false;
+        loop.cap = cap;
+      });
+    };
+    const settled = (steps: number[]): number[] => steps.slice(40);
+
+    it('draws every refresh of a 60 Hz display at a cap of 60, and every second one at a cap of 30', () => {
+      for (const s of settled(capped(60, 60).steps)) expect(Math.abs(s - 16.67)).toBeLessThan(0.3);
+      for (const s of settled(capped(60, 30).steps)) expect(Math.abs(s - 33.33)).toBeLessThan(0.5);
+    });
+
+    it('holds a 90 Hz display steadily at every second refresh rather than flipping between one and two', () => {
+      for (const hz of [89.4, 90, 90.6]) {
+        const { steps, loop } = capped(hz, 60);
+        const unit = 2000 / hz;
+        for (const s of settled(steps)) expect(Math.abs(s - unit)).toBeLessThan(0.5);
+        expect(loop.missed).toBe(0);
+      }
+    });
+
+    it('never draws faster than the cap allows for on faster displays', () => {
+      for (const [hz, cap, every] of [
+        [120, 60, 2],
+        [144, 60, 3],
+        [120, 30, 4],
+        [90, 30, 3],
+      ]) {
+        const unit = (every * 1000) / hz;
+        for (const s of settled(capped(hz, cap).steps)) expect(Math.abs(s - unit)).toBeLessThan(0.5);
+      }
+    });
+
+    it('follows a display the system has slowed to 30 Hz (low power) without calling it late', () => {
+      const { steps, loop } = capped(30, 60);
+      for (const s of settled(steps)) expect(Math.abs(s - 33.33)).toBeLessThan(0.5);
+      expect(loop.missed).toBe(0);
+    });
+
+    it('changes pace without counting a missed frame or lurching to catch up', () => {
+      const times: number[] = [];
+      for (let i = 0; i < 400; i++) times.push(1000 + i * 16.667);
+      const steps: number[] = [];
+      const loop = new FrameLoop((dt) => steps.push(+(dt * 1000).toFixed(2)));
+      loop.auto = false;
+      loop.cap = 30;
+      loop.start();
+      // Idle at 30, then up to 60 (a move begins), then back down, several times over.
+      times.forEach((t, i) => {
+        if (i === 100 || i === 260) loop.cap = 60;
+        if (i === 180 || i === 330) loop.cap = 30;
+        const cb = pending;
+        pending = null;
+        cb?.(t);
+      });
+      expect(loop.missed).toBe(0);
+      expect(Math.max(...steps)).toBeLessThan(34);
+      expect(Math.min(...steps.slice(2))).toBeGreaterThan(16);
+      // The game has kept pace with the clock to within a couple of frames.
+      const stepped = steps.reduce((a, b) => a + b, 0);
+      expect(Math.abs(stepped - (times[times.length - 1] - times[0]))).toBeLessThan(70);
+    });
+  });
+
   it('uses the full rate of a fast display when left to choose', () => {
     const times: number[] = [];
     for (let i = 0; i < 200; i++) times.push(1000 + i * 8.333);

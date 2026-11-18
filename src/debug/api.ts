@@ -34,6 +34,8 @@ import type { PerfRecorder } from './perf';
 import { LEVELS, type Engine, type Level } from '../ai/engine';
 import type { Mode, Opponent } from '../ai/opponent';
 import type { Online } from '../net/online';
+import type { Profile } from '../core/device';
+import type { Mobile } from '../core/mobile';
 
 export interface DebugDeps {
   scene: THREE.Scene;
@@ -60,6 +62,10 @@ export interface DebugDeps {
   engine: Engine;
   opponent: Opponent;
   online: Online;
+  /** What the page decided it is running on (desktop, phone or tablet) and what follows from it. */
+  profile: Profile;
+  /** The touch profile's own state (its interface, the level it draws at); null on the desktop. */
+  mobile: Mobile | null;
 }
 
 export function installDebugApi(d: DebugDeps): void {

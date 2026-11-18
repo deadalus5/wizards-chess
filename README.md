@@ -4,7 +4,10 @@ A cinematic chess game for two players at one screen or online, or one player ag
 walk, leap and glide to their squares, and when one takes another it closes in, strikes, and the
 loser shatters.
 
-**Play it:** https://deadalus5.github.io/wizards-chess/ (desktop browser with WebGL 2; checked in Chromium)
+**Play it:** https://deadalus5.github.io/wizards-chess/ (a browser with WebGL 2. On a desktop it
+is checked in Chromium. On a phone or tablet the page notices and switches itself to a touch
+profile, with nothing to press: checked in emulation and in Safari's engine; on the one real
+phone tried so far it plays well but at only 16 to 19 frames a second, see `DEVNOTES.md`)
 
 ## Run
 
@@ -46,6 +49,21 @@ download them.
 - **Options**, under the opponent panel (click to open): sound, cinematic captures (off keeps
   your own camera and skips the slow motion), follow the side to move, flip the view.
 - Bottom right: undo, new game.
+
+On a phone or tablet, held either way up:
+
+- Tap a statue, then one of the glowing squares. Drag with one finger to turn the board; pinch
+  to zoom, and slide two fingers to move about it (pinching back out returns to the whole
+  board).
+- **HURRY** appears while a move is playing: it does what Space does.
+- The button with three lines opens the menu: new game, opponent, options and the moves. On the
+  board itself there is only whose turn it is, the fallen pieces, UNDO and HURRY.
+- A game against the computer or passed between two players is kept if the page is reloaded or
+  thrown away by the phone; online games come back from their links as always. An invite link
+  can be sent with the phone's share sheet.
+- The picture is sized to the device: the game measures it while loading and picks a level
+  meant to hold an even 60 frames a second, or an even 30. (It does not yet manage that on
+  every phone: the statues themselves are as detailed as on a desktop.)
 
 ## The pieces
 

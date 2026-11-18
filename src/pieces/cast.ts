@@ -82,9 +82,19 @@ export class Cast {
     readonly group: THREE.Group,
   ) {}
 
-  static async create(kit: StatueKit, chess: ChessSet, clipNames: readonly string[]): Promise<Cast> {
+  /**
+   * `pause`, if given, is awaited after each design is built (with how many are done, of how
+   * many): a phone takes seconds over the six, and uses the pauses to move its loading bar.
+   * Without it they are built in one go, as on the desktop.
+   */
+  static async create(kit: StatueKit, chess: ChessSet, clipNames: readonly string[], pause?: (done: number, of: number) => Promise<void>): Promise<Cast> {
     const templates = {} as Record<PieceType, PieceTemplate>;
-    for (const type of PIECE_TYPES) templates[type] = Cast.buildDesign(type, kit, chess);
+    if (pause) {
+      for (let i = 0; i < PIECE_TYPES.length; i++) {
+        templates[PIECE_TYPES[i]] = Cast.buildDesign(PIECE_TYPES[i], kit, chess);
+        await pause(i + 1, PIECE_TYPES.length);
+      }
+    } else for (const type of PIECE_TYPES) templates[type] = Cast.buildDesign(type, kit, chess);
     const group = new THREE.Group();
     group.name = 'cast';
     const cast = new Cast(kit, templates, group);

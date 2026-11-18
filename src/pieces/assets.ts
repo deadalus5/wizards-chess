@@ -4,17 +4,52 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 // BASE_URL is '/' in dev and the Pages sub-path in builds; it always ends with a slash.
 export const ASSETS = `${import.meta.env.BASE_URL}assets`;
+/** Smaller copies of the textures, for phones and tablets (scripts/make-lite-assets.sh). */
+export const LITE_ASSETS = `${ASSETS}/lite`;
 
 const gltfLoader = new GLTFLoader();
 gltfLoader.setMeshoptDecoder(MeshoptDecoder);
 const textureLoader = new THREE.TextureLoader();
+
+/**
+ * How many times a failed download is tried again. None by default (a desktop on a wire); the
+ * touch profile sets a few, since one dropped request on a phone's connection would otherwise
+ * end the loading for good.
+ */
+let retries = 0;
+
+export function configureAssets(options: { retries: number }): void {
+  retries = options.retries;
+}
+
+/** Run a download, trying again after a growing pause if it fails. */
+export async function withRetries<T>(load: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await load();
+    } catch (err) {
+      if (attempt >= retries) throw err;
+      await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+    }
+  }
+}
+
+/** `fetch` that fails on an error status and is tried again like the other downloads. */
+export function fetchAsset(url: string): Promise<Response> {
+  if (retries === 0) return fetch(url);
+  return withRetries(async () => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`${response.status} for ${url}`);
+    return response;
+  });
+}
 
 const gltfCache = new Map<string, Promise<GLTF>>();
 
 export function loadGLTF(url: string): Promise<GLTF> {
   let p = gltfCache.get(url);
   if (!p) {
-    p = gltfLoader.loadAsync(url);
+    p = retries === 0 ? gltfLoader.loadAsync(url) : withRetries(() => gltfLoader.loadAsync(url));
     gltfCache.set(url, p);
   }
   return p;
@@ -34,7 +69,7 @@ export function loadTexture(url: string, opts: TextureOptions = {}): Promise<THR
   const key = url + JSON.stringify(opts);
   let p = textureCache.get(key);
   if (!p) {
-    p = textureLoader.loadAsync(url).then((tex) => {
+    p = (retries === 0 ? textureLoader.loadAsync(url) : withRetries(() => textureLoader.loadAsync(url))).then((tex) => {
       tex.colorSpace = opts.srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
       tex.flipY = opts.flipY ?? true;
       if (opts.repeat) tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
@@ -61,7 +96,7 @@ let manifestPromise: Promise<ClipInfo[]> | null = null;
 
 /** The animation library's index: every human clip with its duration and loop flag. */
 export function loadClipManifest(): Promise<ClipInfo[]> {
-  manifestPromise ??= fetch(`${ASSETS}/anim/manifest.json`)
+  manifestPromise ??= fetchAsset(`${ASSETS}/anim/manifest.json`)
     .then((r) => r.json())
     .then((m) => m.rigs.human.animations as ClipInfo[]);
   return manifestPromise;

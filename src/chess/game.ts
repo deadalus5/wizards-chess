@@ -1,4 +1,4 @@
-import { Chess, type Color, type Move, type PieceSymbol, type Square } from 'chess.js';
+import { Chess, DEFAULT_POSITION, type Color, type Move, type PieceSymbol, type Square } from 'chess.js';
 
 export type DrawReason = 'stalemate' | 'repetition' | 'insufficient material' | 'fifty-move rule';
 
@@ -66,6 +66,12 @@ export class ChessGame {
   /** The moves so far in coordinate notation (`e2e4`, `e7e8q`). */
   historyUci(): string[] {
     return this.chess.history({ verbose: true }).map((m) => m.from + m.to + (m.promotion ?? ''));
+  }
+
+  /** Whether the game began from the ordinary starting position, so that its moves alone describe it. */
+  get standardStart(): boolean {
+    const first = this.chess.history({ verbose: true })[0];
+    return (first ? first.before : this.chess.fen()) === DEFAULT_POSITION;
   }
 
   fen(): string {
