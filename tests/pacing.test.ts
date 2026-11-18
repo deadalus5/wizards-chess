@@ -107,4 +107,24 @@ describe('TimeWarp', () => {
     expect(w.at(w.when(0.45))).toBeCloseTo(0.45, 3);
     expect(w.duration).toBeGreaterThan(1.07);
   });
+
+  it('plays a flourish at its own speed and slows only the wind-up after it', () => {
+    // A combination: two passes of the blades up to 0.84, then draw back (top at 1.11) and thrust at 1.21.
+    const w = new TimeWarp(1.11, 1.21, 1.8, tempo, 0.84);
+    // The flourish is untouched.
+    for (const t of [0.1, 0.4, 0.7]) expect(w.at(t)).toBeCloseTo(t, 2);
+    expect(w.when(0.84)).toBeCloseTo(0.84, 1);
+    // From there to the top takes longer than the clip does, and the blow later still.
+    expect(w.when(1.11) - w.when(0.84)).toBeCloseTo((1.11 - 0.84) / 0.7, 1);
+    expect(w.when(1.21)).toBeGreaterThan(0.84 + 0.27 / 0.7 + 0.18);
+    expect(w.at(w.when(1.21))).toBeCloseTo(1.21, 3);
+    // Never backwards, across the join.
+    let prev = -1;
+    for (let t = 0; t < w.duration; t += 1 / 120) {
+      expect(w.at(t)).toBeGreaterThanOrEqual(prev);
+      prev = w.at(t);
+    }
+    // With no flourish the same call is the plain pacing.
+    expect(new TimeWarp(0.44, 0.73, 1.48, tempo, 0).when(0.73)).toBeCloseTo(new TimeWarp(0.44, 0.73, 1.48, tempo).when(0.73), 9);
+  });
 });

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { findContact, solveStrike, type StrikeTrack, type StrikeZone } from '../src/sequence/strike';
+import { findContact, solveStrike, zoneCentre, type StrikeTrack, type StrikeZone } from '../src/sequence/strike';
 
 /**
  * A weapon path to plan against, without a statue: an overhead blow. The hands are at
@@ -43,7 +43,7 @@ describe('strike planning', () => {
   });
 
   it('stands the attacker where the blow comes down on the head, not on the chest', () => {
-    const s = solveStrike(overhead, [0.6], 0.95, head, [0], 2.3);
+    const s = solveStrike(overhead, [0.6], 0.95, head, { maxDistance: 2.3 });
     expect(s.lands).toBe(true);
     const c = s.contacts[0];
     expect(c.point.y).toBeGreaterThanOrEqual(head.bottom);
@@ -53,13 +53,13 @@ describe('strike planning', () => {
     expect(c.along).toBeGreaterThan(0.6);
     // The same blow against the whole body stands farther off and lands lower: the old behaviour.
     const body: StrikeZone = { radius: 0.075, bottom: 0.04, top: 2.1, forward: 0 };
-    const low = solveStrike(overhead, [0.6], 0.95, body, [0], 2.3);
+    const low = solveStrike(overhead, [0.6], 0.95, body, { maxDistance: 2.3 });
     expect(low.distance).toBeGreaterThan(s.distance - 1e-6);
   });
 
   it('never takes a limit farther than the attacker already stands', () => {
     for (const limit of [1.25, 1.75, 2.3]) {
-      const s = solveStrike(overhead, [0.6], 0.95, head, [0], limit);
+      const s = solveStrike(overhead, [0.6], 0.95, head, { maxDistance: limit });
       expect(s.distance).toBeLessThanOrEqual(limit + 1e-9);
     }
   });
@@ -74,22 +74,43 @@ describe('strike planning', () => {
       return { aim, point, windupTop: () => 0.3 } as unknown as StrikeTrack;
     };
     const throat: StrikeZone = { radius: 0.07, bottom: 1.5, top: 1.9, forward: 0 };
-    const level = solveStrike(thrust, [0.5], 1, throat, [0], 2.3);
-    const aimed = solveStrike(thrust, [0.5], 1, throat, [0, 0.15, 0.3, 0.45], 2.3);
+    const level = solveStrike(thrust, [0.5], 1, throat, { maxDistance: 2.3 });
+    const aimed = solveStrike(thrust, [0.5], 1, throat, { aims: [0, 0.15, 0.3, 0.45], maxDistance: 2.3 });
     expect(level.lands).toBe(false);
     expect(aimed.lands).toBe(true);
     expect(aimed.aim).toBe(0.3);
     expect(aimed.track.aim).toBe(0.3);
     expect(aimed.contacts[0].point.y).toBeGreaterThan(throat.bottom);
     // An overhead blow sweeps every height on its way down: no aim is used though it is on offer.
-    expect(solveStrike(overhead, [0.6], 0.95, head, [0, 0.2, 0.4], 2.3).aim).toBe(0);
+    expect(solveStrike(overhead, [0.6], 0.95, head, { aims: [0, 0.2, 0.4], maxDistance: 2.3 }).aim).toBe(0);
   });
 
   it('allows for a head that is not over the feet', () => {
     const bowed: StrikeZone = { ...head, forward: 0.3 };
-    const upright = solveStrike(overhead, [0.6], 0.95, head, [0], 2.3);
-    const leaning = solveStrike(overhead, [0.6], 0.95, bowed, [0], 2.3);
+    const upright = solveStrike(overhead, [0.6], 0.95, head, { maxDistance: 2.3 });
+    const leaning = solveStrike(overhead, [0.6], 0.95, bowed, { maxDistance: 2.3 });
     // The victim's head is 0.3 m nearer the attacker, so the attacker stands that much farther from its feet.
     expect(leaning.distance - upright.distance).toBeCloseTo(0.3, 1);
+
+    // A head carried to the victim's left is to the attacker's right: the blow is turned to meet it.
+    const aside: StrikeZone = { ...head, side: 0.25 };
+    expect(zoneCentre(aside, 1.3, 0).x).toBeCloseTo(-0.25, 6);
+    expect(zoneCentre(aside, 1.3, 0).z).toBeCloseTo(1.3, 6);
+    const turned = solveStrike(overhead, [0.6], 0.95, aside, { maxDistance: 2.3 });
+    expect(turned.lands).toBe(true);
+    expect(turned.bearing).toBeGreaterThan(0.1);
+    const c = zoneCentre(aside, turned.distance, turned.bearing);
+    expect(Math.hypot(turned.contacts[0].point.x - c.x, turned.contacts[0].point.z - c.z)).toBeLessThan(aside.radius);
+  });
+
+  it('places a blow struck on the move from where the body is at that moment', () => {
+    // The attacker is still 0.4 m short of where it will stand, and 0.2 m off the floor, as the blow falls.
+    const moving = (): ((clip: number, out: THREE.Vector3) => void) => (_clip, out) => void out.set(0, 0.2, -0.4);
+    const still = solveStrike(overhead, [0.6], 0.95, head, { maxDistance: 2.3 });
+    const flying = solveStrike(overhead, [0.6], 0.95, head, { maxDistance: 2.3, moving });
+    expect(flying.lands).toBe(true);
+    // It must come down 0.4 m nearer the victim for the same blow to land.
+    expect(still.distance - flying.distance).toBeGreaterThan(0.25);
+    expect(flying.contacts[0].point.y).toBeGreaterThan(head.bottom);
   });
 });

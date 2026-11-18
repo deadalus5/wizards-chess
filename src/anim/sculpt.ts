@@ -168,11 +168,12 @@ const _v = new THREE.Vector3();
  * about the line of the shoulders, with part of the angle taken by the upper spine, so two
  * hands on one shaft stay on it. The strike planner runs this on the poses it measures and the
  * statue runs it on the pose it shows, with the same angle, so the weapon goes where it was
- * planned to go.
+ * planned to go. (`only`: see `poseJoints`.)
  */
-export function aimPose(pose: Pose, rig: Rig, bones: AimBones, angle: number, joints: Joints): void {
+export function aimPose(pose: Pose, rig: Rig, bones: AimBones, angle: number, joints: Joints, only?: ArrayLike<number>): void {
   if (Math.abs(angle) < 1e-6) return;
-  poseJoints(pose, rig, joints.pos, joints.rot);
+  // Only the shoulders are needed: `only` may leave out every bone that does not lead to them.
+  poseJoints(pose, rig, joints.pos, joints.rot, only);
   const l = bones.arms[0] * 3;
   const r = bones.arms[1] * 3;
   const p = joints.pos;

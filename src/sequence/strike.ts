@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { BakedClip } from '../anim/bake';
-import { Pose, poseJoints, sampleClip } from '../anim/pose';
+import { bonesTo, Pose, poseJoints, sampleClip } from '../anim/pose';
 import { aimBones, aimPose, createJoints } from '../anim/sculpt';
 import type { Actor } from '../pieces/actor';
 
@@ -51,6 +51,8 @@ export class StrikeTrack {
     const joints = createJoints(rig);
     const aimed = aim !== 0 ? aimBones(rig) : null;
     const scratch = aimed ? createJoints(rig) : null;
+    // Only the weapon hand and the two shoulders matter here: a sixth of the skeleton.
+    const only = bonesTo(rig, [hand, ...(aimed ? aimed.arms : [])]);
     const scale = actor.design.scale;
     const q = new THREE.Quaternion();
     const v = new THREE.Vector3();
@@ -59,8 +61,8 @@ export class StrikeTrack {
     this.tip = new Float32Array(this.count * 3);
     for (let i = 0; i < this.count; i++) {
       sampleClip(clip, Math.min(i * StrikeTrack.STEP, clip.duration), pose);
-      if (aimed && scratch) aimPose(pose, rig, aimed, aim, scratch);
-      poseJoints(pose, rig, joints.pos, joints.rot);
+      if (aimed && scratch) aimPose(pose, rig, aimed, aim, scratch, only);
+      poseJoints(pose, rig, joints.pos, joints.rot, only);
       q.fromArray(joints.rot, hand * 4);
       const hx = joints.pos[hand * 3];
       const hy = joints.pos[hand * 3 + 1];
@@ -104,21 +106,45 @@ export class StrikeTrack {
   }
 
   /**
-   * The top of the wind-up before a blow at clip time `hit`: the moment, in the half second
-   * or so before it, at which the far end of the weapon is moving slowest.
+   * The top of the wind-up before a blow at clip time `hit`: the last moment before the blow
+   * at which the far end of the weapon is all but still. Going back from the blow, that is
+   * the first time it is moving at less than a seventh of its speed in the blow, and then on
+   * to where it stops getting slower. (A swing may falter for a frame on its way round; that
+   * is not its top. For a blow with no wind-up to speak of, the top is the start of the clip.)
    */
   windupTop(hit: number): number {
     let top = this.tops.get(hit);
     if (top === undefined) {
-      top = Math.max(0, hit - 0.6);
-      let slowest = Infinity;
-      for (let t = top; t <= hit - 0.1; t += StrikeTrack.STEP) {
-        const speed = this.velocity(t, 1, _p).lengthSq();
-        if (speed < slowest) {
-          slowest = speed;
+      const step = 1 / 60;
+      const speed = (t: number): number => (this.velocity(t - step, 1, _p).length() + this.velocity(t, 1, _p).length() + this.velocity(t + step, 1, _p).length()) / 3;
+      const earliest = Math.max(0, hit - 0.7);
+      let peak = 0;
+      for (let t = hit - 0.1; t <= hit + 0.05; t += step) peak = Math.max(peak, speed(t));
+      const still = 0.15 * peak;
+      let t = Math.max(0, hit - 0.08);
+      top = t;
+      let slowest = speed(t);
+      // Back to where it is all but still (remembering the slowest moment, in case it never is).
+      for (; t >= earliest && speed(t) > still; t -= step) {
+        if (speed(t) < slowest) {
+          slowest = speed(t);
           top = t;
         }
       }
+      if (t >= earliest) {
+        top = t;
+        slowest = speed(t);
+        for (t -= step; t >= earliest; t -= step) {
+          const v = speed(t);
+          // Still slowing as we go back: keep going. Rising again by a clear margin: that was the top.
+          if (v > slowest * 1.08 + 0.05) break;
+          if (v < slowest) {
+            slowest = v;
+            top = t;
+          }
+        }
+      }
+      top = Math.max(0, top);
       this.tops.set(hit, top);
     }
     return top;
@@ -153,6 +179,8 @@ export interface StrikeZone {
   top: number;
   /** How far towards the attacker the zone stands from the victim's own centre (a bowed head), metres. */
   forward: number;
+  /** How far to the victim's own left it stands (a head carried over one knee), metres. */
+  side?: number;
   /** Heights between which the blow should land for preference. */
   sweet?: [number, number];
   /** A height below which a contact scarcely reads as a blow (the shins). */
@@ -202,13 +230,82 @@ export function findContact(track: StrikeTrack, nominal: number, along: number, 
   return { time: nominal, along, point: _p.clone(), found: false };
 }
 
+/**
+ * The outer part of a weapon through the window of time in which a blow may land, sampled
+ * once. A placing is searched over hundreds of distances and bearings, and each of them asks
+ * the same thing of the same few hundred points: this asks it without working them out again.
+ * It answers exactly as `findContact` does at the same step.
+ */
+class SweepWindow {
+  private readonly times: number[] = [];
+  private readonly alongs: number[] = [];
+  /** x, y, z for each moment and each place along the weapon. */
+  private readonly points: Float32Array;
+
+  constructor(track: StrikeTrack, nominal: number, before: number, after: number, step: number) {
+    for (let t = Math.max(0, nominal - before); t <= nominal + after; t += step) this.times.push(t);
+    for (let a = 1; a >= 0.29; a -= 0.1) this.alongs.push(a);
+    this.points = new Float32Array(this.times.length * this.alongs.length * 3);
+    let k = 0;
+    for (const t of this.times) {
+      for (const a of this.alongs) {
+        track.point(t, a, _p);
+        this.points[k++] = _p.x;
+        this.points[k++] = _p.y;
+        this.points[k++] = _p.z;
+      }
+    }
+  }
+
+  /** The first moment at which the weapon is inside `zone` standing at (`tx`, `tz`), and where: or null. */
+  first(tx: number, tz: number, zone: StrikeZone, offset?: BodyOffset): Contact | null {
+    const { times, alongs, points } = this;
+    const r2 = zone.radius * zone.radius;
+    let k = 0;
+    for (let i = 0; i < times.length; i++) {
+      let ox = 0;
+      let oy = 0;
+      let oz = 0;
+      if (offset) {
+        offset(times[i], _o);
+        ox = _o.x;
+        oy = _o.y;
+        oz = _o.z;
+      }
+      for (let j = 0; j < alongs.length; j++, k += 3) {
+        const y = points[k + 1] + oy;
+        if (y <= zone.bottom || y >= zone.top) continue;
+        const dx = points[k] + ox - tx;
+        const dz = points[k + 2] + oz - tz;
+        if (dx * dx + dz * dz < r2) return { time: times[i], along: alongs[j], point: new THREE.Vector3(points[k] + ox, y, points[k + 2] + oz), found: true };
+      }
+    }
+    return null;
+  }
+}
+
+/**
+ * Where a zone stands in the attacker's frame, for a victim `distance` away, `bearing` round to
+ * the attacker's left of straight ahead, and facing the attacker.
+ */
+export function zoneCentre(zone: StrikeZone, distance: number, bearing: number): { x: number; z: number } {
+  const sin = Math.sin(bearing);
+  const cos = Math.cos(bearing);
+  const reach = distance - zone.forward;
+  const side = zone.side ?? 0;
+  // The victim's own left is the attacker's right.
+  return { x: reach * sin - side * cos, z: reach * cos + side * sin };
+}
+
 /** Whether the weapon passes through the victim's body, below the zone, between two clip times. */
-function throughBody(track: StrikeTrack, from: number, until: number, tx: number, tz: number, zone: StrikeZone): boolean {
+function throughBody(track: StrikeTrack, from: number, until: number, tx: number, tz: number, zone: StrikeZone, offset?: BodyOffset): boolean {
   const radius = zone.body ?? 0;
   if (radius <= 0) return false;
   for (let t = from; t < until - 1e-6; t += 1 / 60) {
+    if (offset) offset(t, _o);
     for (let a = 1; a >= 0.29; a -= 0.1) {
       track.point(t, a, _p);
+      if (offset) _p.add(_o);
       if (_p.y > 0.25 && _p.y < zone.bottom - 0.06 && Math.hypot(_p.x - tx, _p.z - tz) < radius) return true;
     }
   }
@@ -233,6 +330,23 @@ export interface StrikeSolution {
   short?: boolean;
 }
 
+/** What a placing is searched over, beyond the weapon's path and the zone. */
+export interface SolveOptions {
+  /** Aims to try, radians (default: none). */
+  aims?: readonly number[];
+  /** The farthest and nearest the attacker may stand, metres. */
+  maxDistance: number;
+  minDistance?: number;
+  /**
+   * For a blow struck while the attacker is still moving (landing from a leap): where its body
+   * is, relative to where it will stand, for a given placing.
+   */
+  moving?: (distance: number, bearing: number) => BodyOffset;
+  /** How long before and after the nominal moment the weapon may meet the zone, seconds of the clip. */
+  before?: number;
+  after?: number;
+}
+
 /** What each radian of aim costs against the other things a placing is scored on: the less re-aiming the better. */
 const AIM_COST = 1.4;
 
@@ -243,27 +357,29 @@ const AIM_COST = 1.4;
  * allows, at a height the blow should prefer, without passing through the body on the way.
  * `trackAt` gives the weapon's path for an aim; earlier blows are placed with no aim.
  */
-export function solveStrike(trackAt: (aim: number) => StrikeTrack, hits: readonly number[], along: number, zone: StrikeZone, aims: readonly number[], maxDistance: number, minDistance = 0.6): StrikeSolution {
+export function solveStrike(trackAt: (aim: number) => StrikeTrack, hits: readonly number[], along: number, zone: StrikeZone, options: SolveOptions): StrikeSolution {
+  const { maxDistance, minDistance = 0.6, moving, before = 0.3, after = 0.14 } = options;
+  const aims = options.aims ?? [0];
   const last = hits[hits.length - 1];
   let best: { d: number; bearing: number; aim: number } | null = null;
   let bestScore = Infinity;
   for (const aim of aims) {
     const track = trackAt(aim);
     const top = track.windupTop(last);
+    const sweep = new SweepWindow(track, last, before, after, 1 / 60);
     for (let d = Math.min(maxDistance, 2.3); d >= minDistance - 1e-6; d -= 0.04) {
-      const reach = d - zone.forward;
       for (let k = -6; k <= 6; k++) {
         const bearing = (k * 5 * Math.PI) / 180;
-        const tx = reach * Math.sin(bearing);
-        const tz = reach * Math.cos(bearing);
-        const c = findContact(track, last, along, tx, tz, zone, 1 / 60);
-        if (!c.found) continue;
+        const { x: tx, z: tz } = zoneCentre(zone, d, bearing);
+        const offset = moving?.(d, bearing);
+        const c = sweep.first(tx, tz, zone, offset);
+        if (!c) continue;
         let score = Math.abs(c.time - last) * 3 + Math.abs(bearing) * 0.8 + (1 - c.along) * 0.6 - d * 0.25 + Math.abs(aim) * AIM_COST;
         // A blow to the shins does not read as a blow.
         if (zone.low !== undefined && c.point.y < zone.low) score += 0.5;
         if (zone.sweet) score += Math.max(0, zone.sweet[0] - c.point.y, c.point.y - zone.sweet[1]) * 3;
         if (score >= bestScore) continue;
-        if (throughBody(track, top, c.time, tx, tz, zone)) continue;
+        if (throughBody(track, top, c.time, tx, tz, zone, offset)) continue;
         bestScore = score;
         best = { d, bearing, aim };
       }
@@ -277,11 +393,10 @@ export function solveStrike(trackAt: (aim: number) => StrikeTrack, hits: readonl
     return { distance: d, bearing: 0, aim: 0, track, contacts: hits.map((h) => ({ time: h, along, point: track.point(h, along).clone(), found: false })), lands: false };
   }
   const track = trackAt(best.aim);
-  const reach = best.d - zone.forward;
-  const tx = reach * Math.sin(best.bearing);
-  const tz = reach * Math.cos(best.bearing);
+  const { x: tx, z: tz } = zoneCentre(zone, best.d, best.bearing);
+  const offset = moving?.(best.d, best.bearing);
   // Earlier blows are struck before the aim comes on, and may land anywhere on the figure.
-  const anywhere: StrikeZone = { radius: zone.radius, bottom: 0.04, top: zone.top, forward: zone.forward };
-  const contacts = hits.map((h, i) => (i === hits.length - 1 ? findContact(track, h, along, tx, tz, zone) : findContact(trackAt(0), h, along, tx, tz, anywhere)));
+  const anywhere: StrikeZone = { radius: zone.radius, bottom: 0.04, top: zone.top, forward: zone.forward, side: zone.side };
+  const contacts = hits.map((h, i) => (i === hits.length - 1 ? findContact(track, h, along, tx, tz, zone, StrikeTrack.STEP, before, after, offset) : findContact(trackAt(0), h, along, tx, tz, anywhere, StrikeTrack.STEP, before, after, offset)));
   return { distance: best.d, bearing: best.bearing, aim: best.aim, track, contacts, lands: contacts[contacts.length - 1].found };
 }

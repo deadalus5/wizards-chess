@@ -209,8 +209,8 @@ async function boot(): Promise<void> {
   await pipeline.renderer.compileAsync(scene, camera);
   rig.update(0);
   const warmStart = performance.now();
-  warmUp({ pipeline, cast, fx, markers, stage: director.stage, physics });
-  const boot = { warmUpMs: Math.round(performance.now() - warmStart) };
+  const warmed = warmUp({ pipeline, cast, fx, markers, stage: director.stage, physics });
+  const boot = { warmUpMs: Math.round(performance.now() - warmStart), ...warmed };
   loop.start();
   loading.progress(1, 'Ready');
   loading.done();

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { applyPose, Pose, poseJoints, sampleClip } from '../src/anim/pose';
+import { applyPose, bonesTo, Pose, poseJoints, sampleClip } from '../src/anim/pose';
 import { rigFromBones, type Rig } from '../src/anim/rig';
 import { aimBones, aimPose, composePose, createJoints, groupMask, plantFeet, staticClip, turnBone } from '../src/anim/sculpt';
 
@@ -67,6 +67,35 @@ describe('pose tools', () => {
     // The figure really is the right way up, facing +z, with its left at +x.
     expect(at(joints.pos, rig, 'head').y).toBeGreaterThan(1.5);
     expect(at(joints.pos, rig, 'hand_l').x).toBeGreaterThan(0.5);
+  });
+
+  it('works out a limb alone exactly as it works out the whole figure', () => {
+    const { rig } = figure();
+    const pose = new Pose(rig.names.length).setRest(rig);
+    turnBone(pose, rig, rig.index.get('spine_02')!, new THREE.Vector3(0, 1, 0), 0.3);
+    turnBone(pose, rig, rig.index.get('upperarm_r')!, new THREE.Vector3(1, 0, 0), -0.7);
+    const whole = createJoints(rig);
+    poseJoints(pose, rig, whole.pos, whole.rot);
+    const hand = rig.index.get('hand_r')!;
+    const only = bonesTo(rig, [hand, rig.index.get('upperarm_l')!]);
+    // The hand, the other shoulder and what they hang from: not the legs, not the head.
+    expect(only.length).toBeLessThan(rig.names.length);
+    expect([...only]).toContain(rig.index.get('spine_03')!);
+    expect([...only]).not.toContain(rig.index.get('thigh_l')!);
+    for (let i = 1; i < only.length; i++) expect(only[i]).toBeGreaterThan(only[i - 1]);
+    const part = createJoints(rig);
+    poseJoints(pose, rig, part.pos, part.rot, only);
+    for (const b of only) {
+      for (let k = 0; k < 3; k++) expect(part.pos[b * 3 + k]).toBeCloseTo(whole.pos[b * 3 + k], 9);
+      for (let k = 0; k < 4; k++) expect(part.rot[b * 4 + k]).toBeCloseTo(whole.rot[b * 4 + k], 9);
+    }
+    // Aiming gives the same pose whether it measures the whole figure or only the shoulders.
+    const bones = aimBones(rig)!;
+    const a = new Pose(rig.names.length).copy(pose);
+    const b = new Pose(rig.names.length).copy(pose);
+    aimPose(a, rig, bones, 0.3, createJoints(rig));
+    aimPose(b, rig, bones, 0.3, createJoints(rig), bonesTo(rig, [hand, ...bones.arms]));
+    for (let i = 0; i < a.rot.length; i++) expect(b.rot[i]).toBeCloseTo(a.rot[i], 9);
   });
 
   it('turnBone turns a bone, and what hangs from it, about an axis in the figure\'s frame', () => {

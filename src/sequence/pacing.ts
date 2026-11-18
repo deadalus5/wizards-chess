@@ -99,19 +99,25 @@ export class TimeWarp {
    * @param apex clip time of the top of the wind-up
    * @param hit clip time of the blow
    * @param end clip time at which playback stops
+   * @param from clip time before which the clip plays at its own speed (the earlier blows of
+   *   a combination, which are not the ones being dwelt on)
    */
-  constructor(apex: number, hit: number, end: number, tempo: Tempo) {
-    const top = Math.min(Math.max(apex, 0), hit);
+  constructor(apex: number, hit: number, end: number, tempo: Tempo, from = 0) {
+    const lead = Math.min(Math.max(from, 0), hit);
+    const top = Math.min(Math.max(apex, lead), hit);
     const crept = Math.min(CREEP * tempo.hold, Math.max(0, hit - top));
     // Where each phase ends, in timeline seconds.
-    const t1 = top / tempo.windup;
+    const t0 = lead;
+    const t1 = t0 + (top - lead) / tempo.windup;
     const t2 = t1 + (crept > 0 ? tempo.hold : 0);
     const t3 = t2 + Math.max(0, hit + THROUGH - top - crept) / tempo.swing;
     const held = crept > 0 ? crept / tempo.hold : tempo.swing;
+    const first = lead > 0 ? 1 : tempo.windup;
     /** Clip seconds played by timeline time `x`, before smoothing. */
     const played = (x: number): number => {
-      if (x <= 0) return x * tempo.windup;
-      let c = Math.min(x, t1) * tempo.windup;
+      if (x <= 0) return x * first;
+      let c = Math.min(x, t0);
+      if (x > t0) c += (Math.min(x, t1) - t0) * tempo.windup;
       if (x > t1) c += (Math.min(x, t2) - t1) * held;
       if (x > t2) c += (Math.min(x, t3) - t2) * tempo.swing;
       if (x > t3) c += (x - t3) * tempo.follow;

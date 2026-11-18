@@ -21,8 +21,9 @@ import type { PoseSpec } from '../pieces/roster';
 import { openEdgesPerChunk } from '../pieces/fracture';
 import { PIECE_TYPES } from '../pieces/regalia';
 import { ATTACKS } from '../sequence/attacks';
-import { captureTuning, strikeFor, strikeZone } from '../sequence/capture';
-import { strikeTrack } from '../sequence/strike';
+import { captureTuning, lastCapture, pickAttack, placeAttack, standingPoint, strikeFor, strikeZone, sweepTouches } from '../sequence/capture';
+import { solveStrike, strikeTrack, type StrikeSolution, type StrikeZone } from '../sequence/strike';
+import { yawTowards } from '../game/squares';
 import type { StatueKit } from '../pieces/statueKit';
 import type { LightRig } from '../render/lighting';
 import type { Markers } from '../render/markers';
@@ -53,7 +54,7 @@ export interface DebugDeps {
   cinema: Cinema;
   reflection: { strength: number; enabled: boolean } | null;
   /** How long things took while the loading screen was up. */
-  boot: { warmUpMs: number };
+  boot: { warmUpMs: number; strikesMs: number };
 }
 
 /** How far the ankle sits above the ball of the foot in a statue's frozen stance, metres. */
@@ -82,8 +83,10 @@ export function installDebugApi(d: DebugDeps): void {
   const api = {
     ...d,
     THREE,
-    /** Choices in how a capture is staged that can be switched for comparison. */
+    /** `captureTuning.variant = 0 | 1` makes every capture use that one of the attacker's attacks; null lets it choose. */
     captureTuning,
+    /** Which attack the capture planned last chose, and what it chose from. */
+    lastCapture,
 
     // ---------------------------------------------------------------- game
     fen: () => game.fen(),
@@ -289,6 +292,8 @@ export function installDebugApi(d: DebugDeps): void {
       try {
         for (const c of cases) {
           controller.start(c.fen);
+          // A move cut short by that start is only let go of once its promise has settled.
+          await sleep(0);
           api.step(0.2);
           api.begin(c.uci);
           const marks: Record<string, number> = {};
@@ -465,15 +470,20 @@ export function installDebugApi(d: DebugDeps): void {
      * kinematics is from where the weapon mesh really is at the hit (should be millimetres),
      * and where it would stand, and when the blow lands, against each kind of victim.
      */
-    strikes(side: Side = 'w'): unknown {
+    strikes(side: Side = 'w', only?: string): unknown {
       const up = new THREE.Vector3(0, 1, 0);
+      const stage = d.director.stage;
       const out: unknown[] = [];
       for (const type of PIECE_TYPES) {
+        if (only && !only.includes(type)) continue;
         const a = cast.living().find((x) => x.side === side && x.type === type);
         if (!a) {
           out.push({ type, missing: true });
           continue;
         }
+        const posture = type === 'k' ? 'kneel' : 'stand';
+        // The distances a capture by this piece is made from.
+        const limits = a.design.mover === 'leap' ? [2.795] : [1.25, 1.77, 3];
         for (const spec of ATTACKS[type]) {
           const clip = cast.clip(a.body, spec.clip);
           const hit = spec.hits[spec.hits.length - 1];
@@ -496,18 +506,30 @@ export function installDebugApi(d: DebugDeps): void {
           };
           const tip = strikeTrack(a, clip, spec.weapon ?? 0).point(hit, 1);
           let worstAim = 0;
+          const problems: string[] = [];
           const versus = PIECE_TYPES.map((v) => {
             const victim = cast.living().find((x) => x.side !== side && x.type === v);
             if (!victim) return `${v}: none`;
-            const zone = strikeZone(victim, spec, 'stand');
+            const zone = strikeZone(stage, victim, spec, posture);
             return (
-              `${v} [zone ${zone.bottom.toFixed(2)}-${zone.top.toFixed(2)}]: ` +
-              [1.25, 1.77, 3]
+              `${v} [zone ${zone.bottom.toFixed(2)}-${zone.top.toFixed(2)}${posture === 'kneel' ? `, head ${zone.forward.toFixed(2)} fwd ${(zone.side ?? 0).toFixed(2)} left` : ''}]: ` +
+              limits
                 .map((limit) => {
-                  const s = strikeFor(d.director.stage, a, victim, spec, limit);
+                  let s = strikeFor(stage, a, victim, spec, limit, posture);
+                  // As a capture does: from the next square it strikes from where it stands, if the weapon reaches.
+                  let here = '';
+                  if (!spec.leap && limit - s.distance < 0.45) {
+                    const exact = strikeFor(stage, a, victim, spec, limit, posture, limit);
+                    if (exact.lands && !exact.short && exact.contacts[exact.contacts.length - 1].along >= 0.55) {
+                      s = exact;
+                      here = '=';
+                    }
+                  }
                   const last = s.contacts[s.contacts.length - 1];
                   if (Math.abs(s.aim) > Math.abs(worstAim)) worstAim = s.aim;
-                  return `@${limit}: d=${s.distance.toFixed(2)} turn=${((s.bearing * 180) / Math.PI).toFixed(0)} aim=${((s.aim * 180) / Math.PI).toFixed(0)} t=${s.contacts.map((k) => k.time.toFixed(2)).join('/')} along=${last.along.toFixed(1)} y=${last.point.y.toFixed(2)}${s.lands ? (s.short ? ' BODY' : '') : ' MISS'}`;
+                  const flag = s.lands ? (s.short ? ' BODY' : '') : ' MISS';
+                  if (flag) problems.push(`${v}@${limit}${flag}`);
+                  return `@${limit}${here}: d=${s.distance.toFixed(2)} turn=${((s.bearing * 180) / Math.PI).toFixed(0)} aim=${((s.aim * 180) / Math.PI).toFixed(0)} t=${s.contacts.map((k) => k.time.toFixed(2)).join('/')} along=${last.along.toFixed(1)} y=${last.point.y.toFixed(2)}${flag}`;
                 })
                 .join(' | ')
             );
@@ -518,13 +540,134 @@ export function installDebugApi(d: DebugDeps): void {
             clip: spec.clip,
             fkErrorMm: fkError(0),
             fkErrorAimedMm: worstAim !== 0 ? fkError(worstAim) : undefined,
+            worstAimDeg: +((worstAim * 180) / Math.PI).toFixed(0),
             tipAtHit: tip.toArray().map((n) => +n.toFixed(2)),
-            weaponBox: [box.min.y, box.max.y].map((n) => +n.toFixed(2)),
+            problems,
             versus,
           });
         }
       }
       return out;
+    },
+
+    /**
+     * For the capture `uci` in the current position: each of the attacker's attacks as it would
+     * be placed, whether it reaches the head, and how much of its sweep passes through bystanders.
+     */
+    placings(uci: string): unknown {
+      const stage = d.director.stage;
+      const attacker = cast.at(uci.slice(0, 2));
+      const victim = cast.at(uci.slice(2, 4));
+      if (!attacker || !victim) throw new Error(`no capture ${uci}`);
+      const A = squareCentre(attacker.square);
+      const V = squareCentre(victim.square);
+      return ATTACKS[attacker.type].map((spec) => {
+        const p = placeAttack(stage, attacker, victim, spec, A, V, attacker.type === 'k' ? 'kneel' : 'stand');
+        const last = p.strike.contacts[p.strike.contacts.length - 1];
+        return { attack: spec.name, lands: p.strike.lands && !p.strike.short, distance: +p.strike.distance.toFixed(2), aimDeg: +((p.strike.aim * 180) / Math.PI).toFixed(0), contactY: +last.point.y.toFixed(2), bystanderSamples: p.touches };
+      });
+    },
+
+    /**
+     * How much weapon sweeps pass through bystanders in the position on the board. For every
+     * capture the side to move could make: each of the attacker's attacks as it would be
+     * placed (does it reach the head; how many samples of its sweep fall inside other statues),
+     * which one the capture would choose, and the same count for the attack that piece made
+     * before there was a choice, placed as it was then.
+     */
+    async bystanders(): Promise<unknown> {
+      const stage = d.director.stage;
+      // The attacks as they were: one each, landing anywhere on the body.
+      const before: Record<string, { clip: string; hits: number[]; along: number; followThrough: number; leap?: { launch: number; land: number; until: number } }> = {
+        p: { clip: 'Spear_Thrust', hits: [0.45], along: 1, followThrough: 0.62 },
+        n: { clip: 'Attack_Jump', hits: [1.21], along: 0.85, followThrough: 0.6, leap: { launch: 0.6, land: 1.22, until: 2.3 } },
+        b: { clip: 'Staff_Combo', hits: [0.52, 1.2], along: 0.9, followThrough: 0.6 },
+        r: { clip: 'Two_Handed_Overhead_Slam', hits: [0.73], along: 0.95, followThrough: 0.75 },
+        q: { clip: 'Dual_Wield_Cross_Slash', hits: [0.5], along: 0.85, followThrough: 0.7 },
+        k: { clip: 'Two_Handed_Horizontal_Swing', hits: [0.6], along: 0.8, followThrough: 0.7 },
+      };
+      const rows = [];
+      for (const attacker of cast.living().filter((a) => a.side === game.turn())) {
+        for (const target of game.targets(attacker.square)) {
+          // (An en passant capture has nothing on the square it moves to: left out.)
+          const victim = cast.at(target.to);
+          if (!target.capture || !victim) continue;
+          const A = squareCentre(attacker.square);
+          const V = squareCentre(victim.square);
+          const apart = A.distanceTo(V);
+          const posture = attacker.type === 'k' ? 'kneel' : 'stand';
+          const now = ATTACKS[attacker.type].map((spec) => {
+            const p = placeAttack(stage, attacker, victim, spec, A, V, posture);
+            return { name: spec.name, lands: p.strike.lands && !p.strike.short, touches: p.touches };
+          });
+
+          const old = before[attacker.type];
+          const clip = await d.kit.clip(attacker.body, old.clip);
+          const scale = victim.design.scale;
+          const zone: StrikeZone = { radius: 0.075 * scale, bottom: 0.04, top: victim.height * 0.98, forward: 0, low: victim.height * 0.22 };
+          const solve = (max: number, min?: number): StrikeSolution => solveStrike(() => strikeTrack(attacker, clip, 0), old.hits, old.along, zone, { maxDistance: max, minDistance: min });
+          let strike = solve(Math.round(Math.min(apart, 2.3) * 20) / 20);
+          if (!old.leap && apart - strike.distance < 0.45) {
+            const here = solve(apart, apart);
+            if (here.lands && here.contacts[here.contacts.length - 1].along >= 0.55) strike = here;
+          }
+          const P = strike.distance >= apart - 0.02 ? A.clone() : standingPoint(stage, attacker, victim, V, A.clone().sub(V).setY(0).normalize(), strike.distance);
+          const was = sweepTouches(stage, attacker, victim, old, strike, P, yawTowards(P, V) - strike.bearing);
+
+          rows.push({
+            capture: `${attacker.side}${attacker.type} ${attacker.square}x${victim.square} (${victim.type})`,
+            before: was,
+            attacks: now.map((o) => `${o.name}: ${o.lands ? 'head' : 'not head'}, ${o.touches}`).join(' | '),
+            chosen: pickAttack(now, undefined).name,
+            after: pickAttack(now, undefined).touches,
+            choice: now.filter((o) => o.lands && o.touches === Math.min(...now.filter((x) => x.lands).map((x) => x.touches))).length,
+          });
+        }
+      }
+      return rows;
+    },
+
+    /**
+     * Measure any library clip as an attack for one piece: the moments its weapon moves fastest
+     * (candidate hit times), where the far end of the weapon is at each, and the top of the
+     * wind-up before it. What the hit times in attacks.ts are taken from.
+     */
+    async weaponPath(code: string, clipName: string, weapon = 0, hits: number[] = []): Promise<unknown> {
+      const a = pick(code);
+      const clip = await d.kit.clip(a.body, clipName);
+      const track = strikeTrack(a, clip, weapon);
+      const step = 1 / 120;
+      const speed: number[] = [];
+      for (let t = 0; t <= clip.duration; t += step) speed.push(track.velocity(t, 1).length());
+      const smooth = speed.map((_, i) => {
+        let sum = 0;
+        let n = 0;
+        for (let j = Math.max(0, i - 3); j <= Math.min(speed.length - 1, i + 3); j++, n++) sum += speed[j];
+        return sum / n;
+      });
+      const peaks: number[] = [];
+      for (let i = 2; i < smooth.length - 2; i++) if (smooth[i] > smooth[i - 1] && smooth[i] >= smooth[i + 1] && smooth[i] > 4 * a.design.scale) peaks.push(i);
+      peaks.sort((x, y) => smooth[y] - smooth[x]);
+      const kept: number[] = [];
+      for (const i of peaks) if (kept.every((j) => Math.abs(i - j) * step > 0.14)) kept.push(i);
+      const f = (n: number): number => +n.toFixed(2);
+      return {
+        clip: clipName,
+        seconds: f(clip.duration),
+        // The top of the wind-up the planner would use for a blow at each of the given times.
+        tops: hits.map((h) => f(track.windupTop(h))),
+        // Speed of the far end, metres per second, every sixtieth of a second.
+        speeds: speed.filter((_, i) => i % 2 === 0).map((v) => +v.toFixed(1)),
+        peaks: kept
+          .slice(0, 5)
+          .sort((x, y) => x - y)
+          .map((i) => {
+            const t = i * step;
+            const tip = track.point(t, 1);
+            const dir = track.velocity(t, 1).normalize();
+            return `t=${f(t)} v=${f(smooth[i])} tip=(${f(tip.x)},${f(tip.y)},${f(tip.z)}) going (${f(dir.x)},${f(dir.y)},${f(dir.z)}) wind-up top ${f(track.windupTop(t))}`;
+          }),
+      };
     },
 
     // ---------------------------------------------------------------- animation

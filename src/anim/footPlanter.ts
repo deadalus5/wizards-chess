@@ -154,13 +154,19 @@ export class FootPlanter {
     this.held = { stance, from, time: 0, ease };
   }
 
-  /** Stop holding: the feet go back to being pinned where they touch down. */
+  /**
+   * Stop holding: the feet go back to being pinned to the floor, where they now are. If the
+   * pose then wants them elsewhere they step there, as after any other move.
+   */
   release(): void {
     if (!this.held) return;
     this.held = null;
+    this.root.updateMatrixWorld(true);
     for (const f of this.feet) {
-      f.locked = false;
+      f.ball.getWorldPosition(f.pin);
+      f.locked = true;
       f.stepping = false;
+      f.weight = 1;
     }
   }
 

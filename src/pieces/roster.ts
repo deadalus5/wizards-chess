@@ -91,6 +91,13 @@ export interface PieceDesign {
   stand?: PoseSpec;
   rise?: number;
   settle?: number;
+  /**
+   * How far to its own left of square-on it turns when it stands to face an attacker, radians
+   * (negative: to its right). A statue that carries something out in front of it stands with
+   * that side drawn back, so that whoever comes to strike it does not stand in what it carries;
+   * its head stays turned to the attacker.
+   */
+  quarter?: number;
   /** How the piece crosses the board. */
   mover: 'walk' | 'leap' | 'glide' | 'slide';
   glide?: GlideSpec;
@@ -195,6 +202,8 @@ export const DESIGNS: Record<PieceType, PieceDesign> = {
     toeCaps: true,
     // Upper body and mace as they were; the legs planted broad and braced.
     rest: { clip: 'One Hand Weapon Idle', time: 0.5, stance: { width: 0.6, toeOut: 0.21, drop: 0.03 } },
+    // Its mace is carried low in front of its right side: that side goes back.
+    quarter: -0.5,
     mover: 'slide',
     slide: { speed: 2.9, ramp: 0.75, lean: 0.045, pivot: 1.9 },
     walk: { clip: 'Walk_Large', rate: 1.25 },

@@ -24,6 +24,7 @@ export interface WarmUpDeps {
 /** Distances a capture is made from: the next square, the next diagonal, and anything farther than a weapon reaches. */
 const NEXT_SQUARE = [SQUARE, SQUARE * Math.SQRT2];
 const REACHES = [...NEXT_SQUARE, 3];
+const KNIGHTS_MOVE = SQUARE * Math.sqrt(5);
 
 // One set of shatter materials is kept for good: a compiled program is thrown away when the
 // last material using it is disposed, and every break disposes its own.
@@ -75,24 +76,33 @@ function rehearseBreak(physics: Physics): void {
  * breaking statue uses (and their shadow versions), the particle shaders, the depth-of-field
  * and particle passes, the markers, and the weapon-reach solutions for every pairing.
  */
-export function warmUp({ pipeline, cast, fx, markers, stage, physics }: WarmUpDeps): void {
+export function warmUp({ pipeline, cast, fx, markers, stage, physics }: WarmUpDeps): { strikesMs: number } {
   rehearseBreak(physics);
+  const strikesStart = performance.now();
 
   // Where every kind of attacker stands, and how it aims, against every kind of victim, for
   // each of its attacks: from the next square (straight or diagonal, exactly), from the
-  // farthest its weapon reaches, and from those two distances as limits.
+  // farthest its weapon reaches, and from those two distances as limits. The king's victims
+  // kneel; a leap is always made from a knight's move away.
   for (const a of PIECE_TYPES) {
     const attacker = cast.actors.find((x) => x.type === a);
     if (!attacker) continue;
+    const posture = a === 'k' ? 'kneel' : 'stand';
     for (const v of PIECE_TYPES) {
       const victim = cast.actors.find((x) => x.type === v && x.side !== attacker.side);
       if (!victim) continue;
       for (const spec of ATTACKS[a]) {
-        for (const reach of REACHES) strikeFor(stage, attacker, victim, spec, reach);
-        for (const reach of NEXT_SQUARE) strikeFor(stage, attacker, victim, spec, reach, 'stand', reach);
+        if (attacker.design.mover === 'leap') {
+          strikeFor(stage, attacker, victim, spec, KNIGHTS_MOVE, posture);
+          continue;
+        }
+        for (const reach of REACHES) strikeFor(stage, attacker, victim, spec, reach, posture);
+        for (const reach of NEXT_SQUARE) strikeFor(stage, attacker, victim, spec, reach, posture, reach);
       }
     }
   }
+
+  const strikesMs = Math.round(performance.now() - strikesStart);
 
   // One statue of each design in its breaking form, so every geometry and program is uploaded.
   const undo: (() => void)[] = [];
@@ -140,4 +150,5 @@ export function warmUp({ pipeline, cast, fx, markers, stage, physics }: WarmUpDe
   markers.update(1);
   pipeline.setDepthOfField(0);
   pipeline.overlayPass.enabled = false;
+  return { strikesMs };
 }

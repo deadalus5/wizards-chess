@@ -213,14 +213,16 @@ const _p = new THREE.Quaternion();
 const _v = new THREE.Vector3();
 
 /**
- * Forward kinematics in model space (the armature's frame): joint positions and,
- * optionally, accumulated rotations. Used for clip analysis and for planning.
+ * Forward kinematics: where every joint is, and how it is turned, in the armature's own frame.
+ * With `only` (bone indices in ascending order, each with all its ancestors) just those joints
+ * are worked out, which is all a caller following one limb needs.
  */
-export function poseJoints(pose: Pose, rig: Rig, outPos: Float32Array, outRot?: Float32Array): void {
-  const n = rig.names.length;
-  const worldRot = outRot ?? new Float32Array(n * 4);
+export function poseJoints(pose: Pose, rig: Rig, outPos: Float32Array, outRot?: Float32Array, only?: ArrayLike<number>): void {
+  const n = only ? only.length : rig.names.length;
+  const worldRot = outRot ?? new Float32Array(rig.names.length * 4);
   const pelvis = rig.index.get('pelvis') ?? -1;
-  for (let i = 0; i < n; i++) {
+  for (let j = 0; j < n; j++) {
+    const i = only ? only[j] : j;
     const p = rig.parent[i];
     _q.fromArray(pose.rot, i * 4);
     if (i === pelvis) _v.set(pose.pelvis[0], pose.pelvis[1], pose.pelvis[2]);
@@ -237,4 +239,11 @@ export function poseJoints(pose: Pose, rig: Rig, outPos: Float32Array, outRot?: 
     }
     _v.toArray(outPos, i * 3);
   }
+}
+
+/** The bones leading to each of `ends`, and those bones themselves, in the order forward kinematics needs them. */
+export function bonesTo(rig: Rig, ends: readonly number[]): Int16Array {
+  const wanted = new Set<number>();
+  for (const end of ends) for (let i = end; i >= 0; i = rig.parent[i]) wanted.add(i);
+  return Int16Array.from([...wanted].sort((a, b) => a - b));
 }

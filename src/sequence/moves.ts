@@ -214,6 +214,14 @@ export function planWalk(tl: Timeline, stage: Stage, actor: Actor, from: THREE.V
 }
 
 /**
+ * The timing and height of a leap across `distance` metres of floor by a statue of a given
+ * scale. One that goes straight into a strike (`handOff`) comes up out of its landing sooner.
+ */
+export function leapShape(distance: number, scale: number, handOff = false): { crouch: number; flight: number; recover: number; apex: number } {
+  return { crouch: 0.3, flight: 0.62 + 0.08 * distance, recover: handOff ? 0.42 : 0.62, apex: (1.0 + 0.2 * distance) * scale };
+}
+
+/**
  * A knight's move: crouch, spring in a high arc over whatever stands between, land in a
  * crouch and rise. Turning happens in the air, where there are no feet to slide.
  */
@@ -228,10 +236,7 @@ export function planLeap(tl: Timeline, stage: Stage, actor: Actor, from: THREE.V
   const turnIn = angleDelta(yaw0, travelYaw);
   const turnOut = angleDelta(travelYaw, yawEnd);
 
-  const crouch = 0.3;
-  const flight = 0.62 + 0.08 * distance;
-  const recover = 0.62;
-  const apex = (1.0 + 0.2 * distance) * design.scale;
+  const { crouch, flight, recover, apex } = leapShape(distance, design.scale, options.handOff);
   const launch = t0 + crouch;
   const touchdown = launch + flight;
   const end = touchdown + recover;
