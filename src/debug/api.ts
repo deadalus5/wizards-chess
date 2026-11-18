@@ -3,7 +3,6 @@
 import * as THREE from 'three';
 import type { PieceSymbol } from 'chess.js';
 import { analyzeGait } from '../anim/gait';
-import { poseJoints } from '../anim/pose';
 import type { ChessGame } from '../chess/game';
 import type { CameraRig } from '../cinema/cameraRig';
 import type { Cinema } from '../cinema/cinema';
@@ -61,17 +60,6 @@ export interface DebugDeps {
   engine: Engine;
   opponent: Opponent;
   online: Online;
-}
-
-/** How far the ankle sits above the ball of the foot in a statue's frozen stance, metres. */
-function ankleRise(actor: Actor, foot: number): number {
-  const rig = actor.template.rig;
-  const side = foot === 0 ? 'l' : 'r';
-  const joints = new Float32Array(rig.names.length * 3);
-  poseJoints(actor.restPose, rig, joints);
-  const ankle = rig.index.get(`foot_${side}`) ?? 0;
-  const ball = rig.index.get(`ball_${side}`) ?? 0;
-  return (joints[ankle * 3 + 1] - joints[ball * 3 + 1]) * actor.design.scale;
 }
 
 export function installDebugApi(d: DebugDeps): void {
@@ -279,65 +267,6 @@ export function installDebugApi(d: DebugDeps): void {
       return { move: uci, seconds: +t.toFixed(2), feet: report };
     },
 
-    /**
-     * Play a move under fine manual stepping and measure how well a dragged statue's feet keep
-     * their stance: how far the ball of each foot strays from its place under the statue, how
-     * far it leaves the floor, how far the sole tips, and whether the planter took any step.
-     * `watch` is the square of the statue to measure (default: the one that moves).
-     */
-    async slideCheck(uci: string, watch = uci.slice(0, 2), hz = 240): Promise<unknown> {
-      const actor = cast.at(watch);
-      if (!actor) throw new Error(`no statue on ${watch}`);
-      const k = actor.design.scale;
-      const rise = [ankleRise(actor, 0), ankleRise(actor, 1)];
-      loop.stop();
-      stress.repeat = 0; // measure without drawing: thousands of steps
-      api.begin(uci);
-      const balls = ['ball_l', 'ball_r'].map((n) => actor.instance.byName.get(n)!);
-      const ankles = ['foot_l', 'foot_r'].map((n) => actor.instance.byName.get(n)!);
-      const v = new THREE.Vector3();
-      const ahead = new THREE.Vector3();
-      let stray = 0;
-      let lift = 0;
-      let tip = 0;
-      let lean = 0;
-      let steps = 0;
-      let t = 0;
-      let travelled = 0;
-      const last = actor.root.position.clone();
-      for (let guard = 0; guard < 40000 && controller.isBusy; guard++) {
-        api.step(1 / hz, hz);
-        t += 1 / hz;
-        const root = actor.root;
-        root.updateMatrixWorld(true);
-        travelled += Math.hypot(root.position.x - last.x, root.position.z - last.z);
-        last.copy(root.position);
-        steps = Math.max(steps, actor.planter.steps);
-        // Let the move's own bookkeeping run, or it can never be seen to finish.
-        if (guard % 8 === 0) await Promise.resolve();
-        if (!actor.planter.holding) continue;
-        ahead.set(0, 0, 1).transformDirection(root.matrixWorld);
-        const yaw = Math.atan2(ahead.x, ahead.z);
-        lean = Math.max(lean, Math.acos(Math.min(1, new THREE.Vector3(0, 1, 0).transformDirection(root.matrixWorld).y)));
-        for (let f = 0; f < 2; f++) {
-          const want = actor.stance[f].ball;
-          balls[f].getWorldPosition(v);
-          const ankleY = ankles[f].getWorldPosition(new THREE.Vector3()).y;
-          lift = Math.max(lift, Math.abs(v.y - want.y * k));
-          // The sole is flat when the ankle sits as far above the ball as it does in the stance.
-          tip = Math.max(tip, Math.abs(ankleY - v.y - rise[f]));
-          v.x -= root.position.x;
-          v.z -= root.position.z;
-          v.applyAxisAngle(new THREE.Vector3(0, 1, 0), -yaw);
-          stray = Math.max(stray, Math.hypot(v.x - want.x * k, v.z - want.z * k));
-        }
-      }
-      await Promise.resolve();
-      stress.repeat = 1;
-      loop.start();
-      const mm = (x: number): number => +(x * 1000).toFixed(1);
-      return { move: uci, watched: watch, seconds: +t.toFixed(2), travelledM: +travelled.toFixed(2), stepsTaken: steps, footStrayMm: mm(stray), footLiftMm: mm(lift), soleTipMm: mm(tip), maxLeanDeg: +((lean * 180) / Math.PI).toFixed(2) };
-    },
     /**
      * How long moves take, in real seconds, played under manual stepping with the cinematic on:
      * for a capture also when the shot cuts in, when the blow lands and when it cuts back.

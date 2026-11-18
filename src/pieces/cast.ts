@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import type { BakedClip } from '../anim/bake';
-import type { FootHold } from '../anim/footPlanter';
 import { Pose, poseJoints } from '../anim/pose';
 import { canon, type Rig } from '../anim/rig';
 import { composePose, createJoints, plantFeet, staticClip, turnBone, type PosePart } from '../anim/sculpt';
@@ -120,20 +119,13 @@ export class Cast {
 
     const joints = createJoints(rig);
     poseJoints(rest, rig, joints.pos, joints.rot);
-    const hold = (side: 'l' | 'r'): FootHold => {
-      const ball = rig.index.get(`ball_${side}`);
-      const foot = rig.index.get(`foot_${side}`);
-      if (ball === undefined || foot === undefined) throw new Error('rig has no feet');
-      return { ball: new THREE.Vector3().fromArray(joints.pos, ball * 3), rotation: new THREE.Quaternion().fromArray(joints.rot, foot * 4) };
-    };
-    const stance: [FootHold, FootHold] = [hold('l'), hold('r')];
     const head = rig.index.get('head') ?? 0;
     const restHead = joints.pos[head * 3 + 1];
     poseJoints(stand, rig, joints.pos, joints.rot);
     const stoop = Math.max(0, joints.pos[head * 3 + 1] - restHead);
 
     const hands = design.glide?.hands ? staticClip(`${design.name} hands`, raisedHands(rest, rig, design.glide.hands)) : null;
-    return { rest, frozen, upright, hands, stance, stoop };
+    return { rest, frozen, upright, hands, stoop };
   }
 
   /** Body + head-piece + fitted armour and clothes + skirt + fittings, merged and pre-fractured. */

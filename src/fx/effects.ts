@@ -106,31 +106,6 @@ export class Effects {
     }
   }
 
-  /** A statue being dragged: the grind of stone on stone for `seconds` (cut short by `grindStop`). */
-  grind(position: THREE.Vector3, seconds: number, heft: number): void {
-    this.audio?.grind(position, seconds, heft);
-  }
-
-  grindStop(): void {
-    this.audio?.stopGrind();
-  }
-
-  /** Dust scraped up by a dragged foot. `direction` is the way it travels; `amount` 0..1 follows its speed. */
-  scrape(position: THREE.Vector3, direction: THREE.Vector3, amount: number): void {
-    const rng = this.rng;
-    const a = rng.range(0, Math.PI * 2);
-    const out = rng.range(0.08, 0.22);
-    this.dust.emit(position.x + Math.cos(a) * 0.05, 0.025, position.z + Math.sin(a) * 0.05, Math.cos(a) * out - direction.x * 0.3, rng.range(0.03, 0.12), Math.sin(a) * out - direction.z * 0.3, {
-      size: 0.04,
-      grow: 0.12 + 0.1 * amount,
-      life: rng.range(0.6, 1.0),
-      alpha: 0.05 + 0.07 * amount,
-      color: FLOOR_DUST,
-      drag: 3,
-      rise: 0.04,
-    });
-  }
-
   /** A statue coming to rest without a leap behind it: a low knock and a thin ring of dust. */
   settle(position: THREE.Vector3, heft: number): void {
     this.rig.addTrauma(0.05 * heft);
@@ -335,7 +310,6 @@ export class Effects {
 
   /** Drop everything in flight (new game, undo). */
   clear(): void {
-    this.audio?.stopGrind();
     this.pending.length = 0;
     for (const t of this.trails) t.hide();
     this.flashLevel = 0;

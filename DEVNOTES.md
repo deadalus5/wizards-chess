@@ -142,8 +142,7 @@ camera drifts round the hall until a click). The debug API `window.__sw` is alwa
   - Added for movement and captures: `timing(cases)` (plays moves undrawn under manual stepping
     and gives, in real seconds, the cut in, the blow, the cut back, the total and every mark the
     timeline names: `cutIn`, `notice`, `arrive`, `strike`, `top`, `blow`, `stepOff`, `cutBack`);
-    `slideCheck(uci)` (how far a slider's feet stray, lift or tip, and how many steps it takes:
-    all should be 0); `pose(code, n, spec)` (try a held pose on one statue; `{clip, time}` shows
+    `pose(code, n, spec)` (try a held pose on one statue; `{clip, time}` shows
     any library frame on the real statue with its weapon); `weaponPath(code, clip, weapon, hits)`
     (speed peaks of the weapon's far end = candidate hit times, its speed every sixtieth of a
     second, and the wind-up top the planner would use); `placings(uci)` (each attack as it would
@@ -294,6 +293,19 @@ and the fracture both read. Run these before and after, and compare:
     lean 2.6 degrees at full speed. A pivot takes 0.35 s + angle / 1.9 rad/s: 1.2 s for a quarter
     turn, 2.0 s for a half turn (kept slow by the owner's choice).
   - The grind: -19.2 dBFS peak, -34.9 RMS, between the footsteps and the ambience.
+  - (The slide, its check and the grind were removed on 2026-11-18, when the rook was given a
+    walk: see the next entry. The three lines above describe the build before that.)
+- Rook's walk and marble plate (2026-11-18), against the slide before it:
+  - Moves, real seconds: a1a2 1.93 -> 3.0, a1a3 4.7, a1d1 2.83 -> about 7.5 (two quarter
+    turns), a1a8 4.55 -> 9.9, a retreat a3a2 3.6 (walked backwards), a5a1 about 10 (two half
+    turns), castling 3.47 -> 7.3. Rook captures: a1a5 11.6 total (blow at 6.4), d1a1 11.6
+    (blow at 5.7). King takes rook 8.05, unchanged. Turn figures were taken at 1.9 rad/s; the
+    rate is now 2.4.
+  - `footDrift`: 0.8-1.0 cm worst planted-foot drift walking forward, 2.2 cm walking backwards.
+  - `strikes('w', 'r')`: every placing reaches the head, forward-kinematics error 2.3 mm.
+    `scripts/verify.mjs`: 120 moves over 60 games consistent; geometries 99 -> 100, textures
+    and programs flat. Headroom at 3200 x 1720: 2.3 ms of CPU a frame.
+  - `Walk_Large` measures 0.66 m/s with a 0.94 m cycle at scale 1.
   - Captures, total real seconds on the standard positions, before -> now (first attack /
     second attack): pawn 5.57 -> 6.93 / 7.25; knight 5.27 -> 5.53 / 6.65; bishop 7.98 -> 8.18 /
     8.33; rook 6.30 -> 7.52 / 7.40; queen 5.52 -> 7.88 / 8.72; king 6.28 -> 8.05 / 8.27. The
@@ -444,8 +456,10 @@ and the fracture both read. Run these before and after, and compare:
     with hanging ends, loose trousers, bound forearms and shins.
   - Bishop: long-sleeved robe with bell cuffs (`vestment`), a cross raised from the robe's own
     surface on the back, gilt belt, and a pleated robe to the shins (`drape`).
-  - Rook: all-metal plate: breast and back plate with a lapped belly plate, standing collar,
-    two-lame pauldrons, flared gauntlets, boots with a cuff, knee plates and rigid toe caps.
+  - Rook: heavy plate. Breast and back plate with a lapped belly plate and two-lame pauldrons
+    are the army's stone, smooth, with a broad metal border (`heavy` in `armorParts`:
+    `bandNarrow: 0.5`, about 22 mm). All metal: standing collar, flared gauntlets, boots with
+    a cuff, knee plates and rigid toe caps.
   - Queen: round shield on the back (rigid on `spine_03`, breaks away whole) whose raised ring
     and one stroke make a Q; a baldric over the cuirass.
 - **Shells** (`buildShell`): besides clip planes, `exclude` cuts convex holes (necklines, the
@@ -474,9 +488,8 @@ and the fracture both read. Run these before and after, and compare:
 - **Animation** (`src/anim`): clips are retargeted by world-space rest-pose deltas and baked to
   uniform frames (`bake.ts`); `pose.ts` samples with Catmull-Rom and blends layers with per-bone
   masks (three's AnimationMixer is not used); `gait.ts` measures ground speed and footfalls;
-  `footPlanter.ts` pins the ball of a planted foot with two-bone IK and takes real steps, or
-  (`hold`) keeps both feet in the statue's own stance, flat, with no steps at all; `ik.ts` is
-  the two-bone solve both use.
+  `footPlanter.ts` pins the ball of a planted foot with two-bone IK and takes real steps;
+  `ik.ts` is the two-bone solve it uses.
 - **Held poses** (`anim/sculpt.ts`): a pose is built from clip frames laid over groups of bones
   (`composePose`), wrapped as a clip that holds still (`staticClip`) so it layers like any
   other, and shaped by hand: `turnBone` (one bone about an axis in the figure's frame),
@@ -496,18 +509,22 @@ and the fracture both read. Run these before and after, and compare:
     upright, no bob, a slow descent and a soft landing; hands lifted from her sides with the
     palms turned out (`hands`, an arms-only layer); she turns in the air, so a turn on the spot
     is a small lift; she takes a captured square with a short float (`floatsOn`), never on foot.
-  - Rook: dragged (`planSlide`). Feet held in its broad frozen stance, eased start and stop,
-    a lean into the motion, a settle on arrival, the grind and scraped dust for as long as it
-    moves. It keeps facing the enemy on an ordinary move and when castling; it turns only to
-    square up to a victim (a slow pivot before it sets off) and back again as it takes the
-    square.
+  - Rook: walks, heavily (`strut` in the roster, read by `planWalk`). It turns to face its
+    path (2.4 rad/s, a big turn all but finished before it sets off and begun only as it
+    stops), walks it on `Walk_Large`, and turns back to face the enemy. The gait quickens with
+    distance (`walk.rate` at one square to `run.rate` at six). `stagger`: the travel runs on a
+    clock that slows at each footfall and quickens between, so the body checks and surges while
+    the gait's phase still follows distance covered. `lean` into the motion, `sway` over the
+    planted foot, a thud and dust at each footfall and as it stops. A retreat of up to two
+    squares is walked backwards, as for any walker. On the spot it turns on its feet like the
+    other walkers, never faster than its own rate.
   - `planStepOn` is how a piece takes the square it has cleared; `planTurn` turns one on the
     spot in the manner of its kind, and with `rise` stands a crouched one up.
 - **Game** (`src/game`, `src/chess`, `src/input`, `src/ui`): `ChessGame` wraps chess.js into
   `MoveEvent`s; `GameController` handles selection, markers, promotion, undo, new game, follow-turn
   camera; `Picker` is analytic (board plane + per-statue cylinders); `Hud` is DOM.
 - **Sequencing** (`src/sequence`): `Timeline` (spans + cues, plus named `marks` for the debug
-  timings), `moves.ts` (`planWalk`, `planLeap`, `planGlide`, `planSlide`, `planTurn`,
+  timings), `moves.ts` (`planWalk`, `planLeap`, `planGlide`, `planTurn`,
   `planStepOn`, castling, promotion swap), `pacing.ts` (`SpeedProfile`: travel with hard or eased
   ramps; `TimeWarp`: the playback of an attack clip, see Captures), `Director` (plays a timeline
   on game time; Space fast-forwards; `baseSpeed` for tests; owns the hit-stop / slow-motion beat,
@@ -542,13 +559,12 @@ and the fracture both read. Run these before and after, and compare:
   - The king's kill (`planKneelingVictim`, only when the attacker is the king): the victim goes
     down on one knee over 2.3 s from the moment it stirs, going down the whole time, head bowing
     over the second half, and is still for 0.5 s before the blow. Pawn, knight and bishop sink
-    as they turn; a rook pivots first and a queen lifts and turns first. A pawn goes from its
+    as they turn; a rook sinks as it turns too, and a queen lifts and turns first. A pawn goes from its
     crouch straight into the kneel. Pawn and bishop keep spear and staff upright and the queen
     keeps her arms (`KNEELS_WITH_OWN_ARMS`); the clip's arms would lay them out at the king's
     feet or through her. The blow is planned against the kneeling head; the king's draw is
     slowed so he is not idle; the break gets the `grand` beat.
-  - `planCapture` lays out: approach (handing straight into the strike; a slider keeps its feet
-    planted through the blow), the victim's track, the blow (impact effects, slow motion,
+  - `planCapture` lays out: approach (handing straight into the strike), the victim's track, the blow (impact effects, slow motion,
     `cast.detach`, `shatter.shatter` with the weapon's onward path so stone gives way as it is
     reached), standing over the break until the pieces have come down, taking the square through
     the rubble (`shatter.setPusher`), camera cut in and back. Stand-off spots swing round the
@@ -564,8 +580,7 @@ and the fracture both read. Run these before and after, and compare:
   line of the blow; drops weapons, fades the glow, heats then cools the broken faces, dissolves
   the rubble with embers; `tuning` holds the wave delay and the outward share), `particles.ts`
   (`Dust` soft lit wisps, `Sparks` additive streaks and flashes, `Shards` instanced chips with
-  bounce), `effects.ts` (`impact`, `collapse`, `landing`, `footstep`, `embers`, `grind` /
-  `grindStop`, `scrape`, `settle`, a pulsed point light at the blow, camera shake).
+  bounce), `effects.ts` (`impact`, `collapse`, `landing`, `footstep`, `embers`, `settle`, a pulsed point light at the blow, camera shake).
 - **Particle layer:** dust and sparks are not in the main scene. `Pipeline.overlay` is rendered
   into its own half-float buffer after depth of field (`OverlayEffect`) and laid over the picture
   before bloom; the particle shaders test and soften themselves against the scene depth texture.
@@ -588,9 +603,7 @@ and the fracture both read. Run these before and after, and compare:
   while the victors' eyes burn. `Timeline.onAbort` cleans up if a new game interrupts.
 - **Sound** (`src/audio`): everything is synthesised (`synth.ts`: filtered noise, sine partials,
   a generated hall impulse response); `audio.ts` places events by screen position and distance.
-  Starts on the click that dismisses the title. Toggle in the HUD, remembered. The rook's grind
-  is low-passed noise with a slow irregular swell, eased in and out, held for the length of a
-  slide or pivot and cut by `stopGrind` (a timeline's abort and `Effects.clear` both call it).
+  Starts on the click that dismisses the title. Toggle in the HUD, remembered.
 - **Frame loop** (`core/loop.ts`): steps the game by whole refresh intervals (callback
   timestamps jitter), forgives single missed frames, catches up only under sustained slowness,
   uses the display's full rate when it is 100 Hz or more and falls back to an even 60.
@@ -713,7 +726,7 @@ and the fracture both read. Run these before and after, and compare:
    no cinematic of its own (the card only).
 4. **Not verified:** Safari and Firefox (everything was checked in Chromium only); a real
    120 Hz display (the pacing logic is unit-tested, the test browser runs at 60 Hz); how any of
-   the sound actually sounds (the rook's grind included: measured, not heard). In the movement
+   the sound actually sounds (none of it has been heard, only measured). In the movement
    and captures session every attack was looked at as stills and every kind of victim was seen
    struck, about 30 of the 60 pairings; the rest are checked by number only (`strikes()`).
 5. Known rough edges:
@@ -724,14 +737,16 @@ and the fracture both read. Run these before and after, and compare:
      would pass through someone, the one that does so least is used.
    - The pawn's lunge has to be aimed up 49 degrees to reach a rook's throat (26-34 for the
      others).
-   - Before the king, a rook or a queen that is not facing him turns first (up to 2.0 s and
-     2.2 s for a half turn) and only then goes down. A queen turns by lifting whenever she is
+   - Before the king, a queen that is not facing him turns first (up to 2.2 s for a half turn)
+     and only then goes down. A queen turns by lifting whenever she is
      any piece's victim too, and the attacker waits for her.
    - Taking straight ahead, the king strikes with the middle of his blade and his hands come
      close to the victim's head: his sword is longer than a square and he does not back away.
    - In a profile shot a victim's weapon can overlap the attacker in the frame while being half
      a metre nearer the camera (a knight landing by a rook is the clearest case).
-   - The rook's and the queen's gaits in the roster (`walk`, `run`, `back`, `carry`) are no
+   - The rook's walk has been looked at as stills only, not in motion at speed, and its long
+     moves are slow (about 10 s across the board; Space fast-forwards).
+   - The queen's gaits in the roster (`walk`, `run`, `back`, `carry`) are no
      longer used by anything.
    - `bystanders()` in the debug API carries a copy of the attacks as they were before there
      were two, for the before and after count.

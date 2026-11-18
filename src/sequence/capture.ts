@@ -88,8 +88,6 @@ interface Segment {
 }
 
 interface SegmentOptions {
-  /** Keep the feet in the frozen stance throughout: a statue that never takes a step. */
-  planted?: boolean;
   /** Bones that take the frozen pose, not the clips, while a clip plays (1 = wholly). */
   keep?: Float32Array | null;
   /** A last touch to the blended pose each frame, given the time on the timeline. */
@@ -110,11 +108,7 @@ function planSegments(tl: Timeline, actor: Actor, position: THREE.Vector3, yaw: 
   if (kept) layers.push(kept);
   let now = t0;
   tl.at(t0, () => {
-    if (options.planted) actor.planter.hold(actor.stance);
-    else {
-      actor.planter.release();
-      actor.planter.enabled = true;
-    }
+    actor.planter.enabled = true;
     const adjust = options.adjust;
     if (adjust) actor.adjust = (pose) => adjust(pose, now);
   });
@@ -565,8 +559,6 @@ function planStandingStrike({ tl, stage, attacker, spec, strike, A, P, home, fac
         }
       : undefined;
   planSegments(tl, attacker, P, faceYaw, segments, arrive, recovered, {
-    // A statue that slides keeps its feet in its stance through the blow as well: it never takes a step.
-    planted: attacker.design.slide !== undefined,
     keep: spec.keep ? groupMask(rig, spec.keep) : null,
     adjust,
   });
@@ -678,11 +670,7 @@ function planStandingVictim(tl: Timeline, stage: Stage, victim: Actor, V: THREE.
   let brace = 0;
   let looking = 0;
   tl.at(start, () => {
-    if (victim.design.slide) victim.planter.hold(victim.stance);
-    else {
-      victim.planter.release();
-      victim.planter.enabled = true;
-    }
+    victim.planter.enabled = true;
     if (head === undefined || neck === undefined) return;
     victim.adjust = (pose) => {
       if (look !== 0) {
@@ -709,8 +697,8 @@ function planStandingVictim(tl: Timeline, stage: Stage, victim: Actor, V: THREE.
 /** How a victim's turn towards the king and its going down are laid end to end, in seconds after it first stirs. */
 function kneelTimes(victim: Actor, delta: number): { turn: number; start: number; apart: boolean } {
   if (Math.abs(delta) < 0.03) return { turn: 0, start: 0, apart: false };
-  // A statue that grinds round, or lifts to turn, does that first and then goes down.
-  if (victim.design.slide || victim.design.glide?.turns) {
+  // A statue that lifts to turn does that first and then goes down.
+  if (victim.design.glide?.turns) {
     const turn = turnDuration(victim, delta);
     return { turn, start: turn, apart: true };
   }
@@ -746,7 +734,6 @@ function planKneelingVictim(tl: Timeline, stage: Stage, victim: Actor, V: THREE.
   const at = V.clone();
   let bow = 0;
   tl.at(begin, () => {
-    victim.planter.release();
     victim.planter.enabled = true;
     victim.adjust = (pose) => bowHead(pose, rig, KNEEL.bow * bow);
   });

@@ -776,6 +776,8 @@ export function armorParts(body: THREE.BufferGeometry, piece: ArmorPiece, m: Lan
   const plate = (options: ShellOptions): PiecePart[] => [shell(body, bodyLayer, REGION.plate, options)];
   const metal = (options: ShellOptions): PiecePart[] => [shell(body, LAYER.flat, REGION.trim, options)];
   const cloth = (options: ShellOptions): PiecePart[] => [shell(body, LAYER.flat, REGION.plate, options)];
+  // Heavy plate in the army's stone, smooth, with a broad metal border.
+  const heavy = (options: ShellOptions): PiecePart[] => [shell(body, LAYER.flat, REGION.plate, { bandNarrow: 0.5, ...options })];
   const torso = [leftOf(m.shoulderX - 0.022), rightOf(-(m.shoulderX - 0.022))];
   switch (piece) {
     case 'cuirass':
@@ -799,8 +801,8 @@ export function armorParts(body: THREE.BufferGeometry, piece: ArmorPiece, m: Lan
       // belly: the layers are what make it read as heavy.
       const neck = neckHole(m, 0.142, 0.116);
       return [
-        ...metal({ planes: [above(m.pelvisY + 0.04), below(m.neckY + 0.035), ...torso], exclude: [neck], thickness: 0.03, rim: 0.012, rimWidth: 0.034, smooth: 5 }),
-        ...metal({ planes: [above(m.pelvisY + 0.05), below(m.waistY + 0.03), ...torso], thickness: 0.043, rim: 0.007, rimWidth: 0.02, smooth: 2 }),
+        ...heavy({ planes: [above(m.pelvisY + 0.04), below(m.neckY + 0.035), ...torso], exclude: [neck], thickness: 0.03, rim: 0.012, rimWidth: 0.034, smooth: 5 }),
+        ...heavy({ planes: [above(m.pelvisY + 0.05), below(m.waistY + 0.03), ...torso], thickness: 0.043, rim: 0.007, rimWidth: 0.02, smooth: 2 }),
       ];
     }
     case 'plateCollar':
@@ -815,9 +817,9 @@ export function armorParts(body: THREE.BufferGeometry, piece: ArmorPiece, m: Lan
       });
     case 'platePauldrons':
       return [
-        ...metal({ planes: [rightOf(m.shoulderX - 0.035), leftOf(m.shoulderX + 0.17), above(m.shoulderY - 0.09)], thickness: 0.044, rim: 0.012, rimWidth: 0.03, mirror: true, smooth: 2 }),
+        ...heavy({ planes: [rightOf(m.shoulderX - 0.035), leftOf(m.shoulderX + 0.17), above(m.shoulderY - 0.09)], thickness: 0.044, rim: 0.012, rimWidth: 0.03, mirror: true, smooth: 2 }),
         // A second lame over the top of the shoulder.
-        ...metal({ planes: [rightOf(m.shoulderX - 0.05), leftOf(m.shoulderX + 0.08), above(m.shoulderY - 0.02)], thickness: 0.06, rim: 0.008, rimWidth: 0.02, mirror: true, smooth: 2 }),
+        ...heavy({ planes: [rightOf(m.shoulderX - 0.05), leftOf(m.shoulderX + 0.08), above(m.shoulderY - 0.02)], thickness: 0.06, rim: 0.008, rimWidth: 0.02, mirror: true, smooth: 2 }),
       ];
     case 'gauntlets': {
       // A flared cuff at the elbow end, narrowing to the wrist.

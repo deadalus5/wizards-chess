@@ -13,7 +13,6 @@ const LEVEL = 0.7;
 export class GameAudio {
   private synth: Synth | null = null;
   private ambience: { stop(): void } | null = null;
-  private grinding: { stop(): void } | null = null;
   private enabled: boolean;
   private readonly last = new Map<string, number>();
   private readonly right = new THREE.Vector3();
@@ -90,20 +89,6 @@ export class GameAudio {
     if (!s) return;
     const p = this.place(position);
     s.footstep(s.ctx.currentTime, heft, p.pan, p.level);
-  }
-
-  /** A statue being dragged across the floor, for `seconds` unless `stopGrind` comes first. */
-  grind(position: THREE.Vector3, seconds: number, heft: number): void {
-    this.stopGrind();
-    const s = this.ready('grind', 0);
-    if (!s || seconds <= 0) return;
-    const p = this.place(position);
-    this.grinding = s.grind(s.ctx.currentTime, seconds, heft, p.pan, p.level);
-  }
-
-  stopGrind(): void {
-    this.grinding?.stop();
-    this.grinding = null;
   }
 
   landing(position: THREE.Vector3, heft: number): void {

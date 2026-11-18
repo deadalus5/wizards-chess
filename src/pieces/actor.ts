@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { BakedClip } from '../anim/bake';
-import { FootPlanter, type FootHold } from '../anim/footPlanter';
+import { FootPlanter } from '../anim/footPlanter';
 import { applyPose, Pose, PoseBlender, poseJoints, sampleClip } from '../anim/pose';
 import { groupMask } from '../anim/sculpt';
 import { homeYaw, squareCentre, type Side } from '../game/squares';
@@ -29,8 +29,6 @@ export interface StatuePoses {
   upright: BakedClip;
   /** Hands lifted from the sides, for a statue that floats with a flourish. */
   hands: BakedClip | null;
-  /** Where the frozen pose puts the feet. */
-  stance: [FootHold, FootHold];
   /** How much lower the head is in the frozen pose than standing, model units. */
   stoop: number;
 }
@@ -80,8 +78,6 @@ export class Actor {
   readonly upright: BakedClip;
   /** Hands lifted from the sides (only a statue that floats with a flourish has this). */
   readonly hands: BakedClip | null;
-  /** Where the frozen pose puts the feet, for holding them there while the statue is dragged. */
-  readonly stance: readonly [FootHold, FootHold];
   /**
    * A last touch to the blended pose before it goes to the bones (aiming a blow, bowing a
    * head). Set by the choreography while it applies; cleared when the statue freezes.
@@ -113,7 +109,6 @@ export class Actor {
     this.frozen = poses.frozen;
     this.upright = poses.upright;
     this.hands = poses.hands;
-    this.stance = poses.stance;
     this.body = design.body;
     this.instance = instantiatePiece(template, material);
     this.root = this.instance.root;

@@ -51,15 +51,16 @@ export interface GlideSpec {
   hands?: { lift: number; bend: number; turn: number };
 }
 
-/** How a statue that is dragged across the board does it. */
-export interface SlideSpec {
-  /** Cruising speed, metres per second, and the seconds taken to reach it and to stop. */
-  speed: number;
-  ramp: number;
+/** How a heavy statue walks: slowly, the body checking at each footfall and surging over the planted foot. */
+export interface StrutSpec {
   /** Lean into the direction of travel at full speed, radians. */
   lean: number;
-  /** Radians per second through the middle of a pivot. */
-  pivot: number;
+  /** Radians per second through the middle of a turn. */
+  turn: number;
+  /** How far the body's speed falls at each footfall and rises between, as a share of its own (0 = even). */
+  stagger: number;
+  /** Roll of the whole figure over the planted foot, radians. */
+  sway: number;
 }
 
 /** The sculpt of one piece type: which body, hair and weapons, how large, and its frozen pose. */
@@ -99,9 +100,10 @@ export interface PieceDesign {
    */
   quarter?: number;
   /** How the piece crosses the board. */
-  mover: 'walk' | 'leap' | 'glide' | 'slide';
+  mover: 'walk' | 'leap' | 'glide';
   glide?: GlideSpec;
-  slide?: SlideSpec;
+  /** A walker that struts. */
+  strut?: StrutSpec;
   /** Gaits: clip and playback rate (below 1 reads as heavier). */
   walk: GaitSpec;
   run: GaitSpec;
@@ -204,12 +206,12 @@ export const DESIGNS: Record<PieceType, PieceDesign> = {
     rest: { clip: 'One Hand Weapon Idle', time: 0.5, stance: { width: 0.6, toeOut: 0.21, drop: 0.03 } },
     // Its mace is carried low in front of its right side: that side goes back.
     quarter: -0.5,
-    mover: 'slide',
-    slide: { speed: 2.9, ramp: 0.75, lean: 0.045, pivot: 1.9 },
-    walk: { clip: 'Walk_Large', rate: 1.25 },
-    run: { clip: 'Jog', rate: 0.74 },
-    back: { clip: 'Walk_Backwards', rate: 1.25 },
-    carry: 0.45,
+    mover: 'walk',
+    strut: { lean: 0.045, turn: 2.4, stagger: 0.55, sway: 0.03 },
+    walk: { clip: 'Walk_Large', rate: 1.05 },
+    run: { clip: 'Walk_Large', rate: 1.6 },
+    back: { clip: 'Walk_Backwards', rate: 0.9 },
+    carry: 0.25,
     heft: 1.0,
   },
   q: {

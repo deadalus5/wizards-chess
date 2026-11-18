@@ -10,7 +10,7 @@ import { homeYaw, SQUARE, squareCentre, yawTowards } from '../game/squares';
 import type { Actor, PoseLayer } from '../pieces/actor';
 import type { Cast } from '../pieces/cast';
 import type { PieceType } from '../pieces/regalia';
-import type { GlideSpec, SlideSpec } from '../pieces/roster';
+import type { GlideSpec } from '../pieces/roster';
 import type { BodyKind } from '../pieces/statueKit';
 import { SpeedProfile } from './pacing';
 import { planPromotion } from './special';
@@ -93,6 +93,8 @@ export function planWalk(tl: Timeline, stage: Stage, actor: Actor, from: THREE.V
   const yaw0 = options.startYaw ?? actor.root.rotation.y;
   const yawEnd = options.finalYaw ?? homeYaw(actor.side);
   let travelYaw = yawTowards(a, b);
+  const strut = design.strut;
+  const turnRate = strut?.turn ?? TURN_RATE;
 
   // Rising and settling only mean anything to a statue with a standing pose of its own.
   const crouches = actor.upright !== actor.frozen;
@@ -108,22 +110,17 @@ export function planWalk(tl: Timeline, stage: Stage, actor: Actor, from: THREE.V
     travelYaw += Math.PI;
   }
   const gait = stage.gait(actor.body, spec.clip);
-  const speed = gait.speed * scale * spec.rate;
+  // A strutting statue has one gait and quickens it a little the further it has to go.
+  const rate = strut && spec !== design.back ? design.walk.rate + (design.run.rate - design.walk.rate) * smoothstep(SQUARE, SQUARE * 6, distance) : spec.rate;
+  const speed = gait.speed * scale * rate;
   const profile = new SpeedProfile(distance, speed, spec === design.run ? 0.3 : 0.34);
 
   const stride = gait.cycle * scale;
 
   const turnIn = angleDelta(yaw0, travelYaw);
   const turnOut = angleDelta(travelYaw, yawEnd);
-  const tIn = Math.abs(turnIn) < 0.02 ? 0 : 0.16 + Math.abs(turnIn) / TURN_RATE;
-  const tOut = Math.abs(turnOut) < 0.02 ? 0 : 0.16 + Math.abs(turnOut) / TURN_RATE;
-  // Big turns are mostly made on the spot; small ones are made on the move.
-  const startTravel = go + (Math.abs(turnIn) > 0.9 ? tIn * 0.6 : 0);
-  const arrive = startTravel + profile.duration;
-  const startOut = arrive - Math.min(tOut * 0.45, profile.duration * 0.35);
-  const still = Math.max(arrive, startOut + tOut);
-  // Time for the feet to step into the frozen stance.
-  const end = still + (options.handOff ? 0.06 : Math.max(0.42, settle));
+  const tIn = Math.abs(turnIn) < 0.02 ? 0 : 0.16 + Math.abs(turnIn) / turnRate;
+  const tOut = Math.abs(turnOut) < 0.02 ? 0 : 0.16 + Math.abs(turnOut) / turnRate;
 
   // Gait phase against travel time. The gait is blended in by weight w, which shortens the
   // stride the legs actually take to w * stride, so the phase must advance faster by 1 / w
@@ -140,6 +137,39 @@ export function planWalk(tl: Timeline, stage: Stage, actor: Actor, from: THREE.V
     const i = Math.min(Math.floor(f), phases.length - 2);
     return phases[i] + (phases[i + 1] - phases[i]) * (f - i);
   };
+
+  // A strut is uneven: the body checks as each foot comes down and surges over it. The travel
+  // is run on a clock of its own that slows and quickens with the gait's phase; the phase
+  // still follows the distance covered, so the planted foot stays where it was put.
+  const checkAt = gait.contacts[0] + 0.04;
+  const clock = [0];
+  if (strut) {
+    while (clock[clock.length - 1] < profile.duration && clock.length < 40000) {
+      const tt = clock[clock.length - 1];
+      const pace = 1 - strut.stagger * weightAt(tt) * Math.cos(4 * Math.PI * (phaseAt(tt) - checkAt));
+      clock.push(tt + STEP * pace);
+    }
+  }
+  /** Seconds along the speed profile, `real` seconds after setting off. */
+  const travelTime = (real: number): number => {
+    if (!strut || clock.length < 2) return real;
+    const f = Math.min(Math.max(real / STEP, 0), clock.length - 1);
+    const i = Math.min(Math.floor(f), clock.length - 2);
+    return Math.min(profile.duration, clock[i] + (clock[i + 1] - clock[i]) * (f - i));
+  };
+  const duration = strut && clock.length > 1 ? (clock.length - 1) * STEP : profile.duration;
+
+  // Big turns are mostly made on the spot; small ones are made on the move. A strutting statue
+  // all but finishes a big turn before it sets off, and all but stops before it turns back.
+  const startTravel = go + (Math.abs(turnIn) > 0.9 ? tIn * (strut ? 0.85 : 0.6) : 0);
+  const arrive = startTravel + duration;
+  const startOut = arrive - (strut && Math.abs(turnOut) > 0.9 ? Math.min(tOut * 0.15, duration * 0.2) : Math.min(tOut * 0.45, duration * 0.35));
+  const still = Math.max(arrive, startOut + tOut);
+  // Time for the feet to step into the frozen stance.
+  const end = still + (options.handOff ? 0.06 : Math.max(0.42, settle));
+  // The way it travels, on the floor.
+  const alongX = distance > 1e-6 ? (b.x - a.x) / distance : 0;
+  const alongZ = distance > 1e-6 ? (b.z - a.z) / distance : 0;
   /** How far out of its frozen pose it is: up as it sets off, down again once it has stopped. */
   const risenAt = (t: number): number => {
     if (!crouches) return 0;
@@ -161,7 +191,7 @@ export function planWalk(tl: Timeline, stage: Stage, actor: Actor, from: THREE.V
   });
   tl.span(t0, end - t0, (local, dt) => {
     const t = t0 + local;
-    const tt = t - startTravel;
+    const tt = travelTime(t - startTravel);
     const s = profile.at(tt);
     const u = distance > 1e-6 ? s / distance : 1;
     actor.root.position.lerpVectors(a, b, u);
@@ -172,10 +202,17 @@ export function planWalk(tl: Timeline, stage: Stage, actor: Actor, from: THREE.V
     else yaw += turnIn;
     if (tOut > 0) yaw += turnOut * ease.inOutCubic(clamp01((t - startOut) / tOut));
     else if (t >= arrive) yaw += turnOut;
-    actor.root.rotation.y = yaw;
-
     const w = weightAt(tt);
     const phase = phaseAt(tt);
+    if (strut) {
+      // Lean into the motion, in the statue's own frame, and roll over whichever foot is down.
+      const lean = strut.lean * profile.fraction(tt);
+      const lx = alongX * Math.cos(yaw) - alongZ * Math.sin(yaw);
+      const lz = alongX * Math.sin(yaw) + alongZ * Math.cos(yaw);
+      const roll = strut.sway * w * Math.sin(2 * Math.PI * (phase - gait.contacts[0]));
+      actor.root.rotation.set(lean * lz, yaw, -lean * lx - roll, 'YXZ');
+    } else actor.root.rotation.y = yaw;
+
     const clipTime = (phase - Math.floor(phase)) * gait.clip.duration;
     const risen = risenAt(t);
     setBase(layers, 1 - w, risen, 0);
@@ -190,13 +227,14 @@ export function planWalk(tl: Timeline, stage: Stage, actor: Actor, from: THREE.V
   // Footfalls: find when the gait phase crosses each foot's contact phase.
   const step = STEP;
   let prev = gait.passing;
-  for (let tt = step; tt < profile.duration; tt += step) {
+  for (let real = step; real < duration; real += step) {
+    const tt = travelTime(real);
     const phase = phaseAt(tt);
     for (let foot = 0; foot < 2; foot++) {
       const c = gait.contacts[foot];
       if (Math.floor(phase - c) > Math.floor(prev - c) && profile.fraction(tt) > 0.25) {
         const bone = foot === 0 ? 'ball_l' : 'ball_r';
-        tl.at(startTravel + tt, () => {
+        tl.at(startTravel + real, () => {
           actor.instance.byName.get(bone)?.getWorldPosition(_v);
           stage.fx.footstep(_v, design.heft);
         });
@@ -205,6 +243,8 @@ export function planWalk(tl: Timeline, stage: Stage, actor: Actor, from: THREE.V
     prev = phase;
   }
 
+  // A heavy statue's weight comes down as it stops.
+  if (strut && !options.handOff && distance > 1e-3) tl.at(still, () => stage.fx.settle(b, design.heft * 0.6));
   tl.at(end, () => {
     actor.root.position.copy(b);
     actor.root.rotation.set(0, yawEnd, 0);
@@ -412,120 +452,18 @@ export function planGlide(tl: Timeline, stage: Stage, actor: Actor, from: THREE.
   return end;
 }
 
-/** Seconds a slider takes to pivot through `delta` radians: eased, so the middle is the fastest part. */
-function pivotDuration(spec: SlideSpec, delta: number): number {
-  return Math.abs(delta) < 0.03 ? 0 : 0.35 + Math.abs(delta) / spec.pivot;
-}
-
-/** Seconds a slider takes to rock back and settle its weight once it has stopped. */
-const SLIDE_SETTLE = 0.5;
-const _dir = new THREE.Vector3();
-const _heading = new THREE.Vector3();
-
-/**
- * A move for a statue that neither walks nor floats: it is dragged across the board as if by
- * an unseen hand, feet flat on the stone the whole way, in the stance it stands frozen in.
- * Slow to start, steady, slow to stop; it leans a little into the way it is going and its
- * weight rocks back and settles when it arrives. It does not turn to face its path. If it
- * has to end on another heading it pivots, feet planted: before setting off when it is
- * closing on a victim (`handOff`), as it goes otherwise.
- */
-export function planSlide(tl: Timeline, stage: Stage, actor: Actor, from: THREE.Vector3, to: THREE.Vector3, t0: number, options: WalkOptions = {}): number {
-  const design = actor.design;
-  const spec = design.slide;
-  if (!spec) throw new Error(`${design.name} does not slide`);
-  const a = from.clone();
-  const b = to.clone();
-  const distance = a.distanceTo(b);
-  const yaw0 = options.startYaw ?? actor.root.rotation.y;
-  const yawEnd = options.finalYaw ?? yaw0;
-  const turn = angleDelta(yaw0, yawEnd);
-  const pivot = pivotDuration(spec, turn);
-  if (distance < 1e-4 && pivot === 0) return t0;
-  const profile = new SpeedProfile(distance, spec.speed, spec.ramp, true);
-  const handOff = options.handOff === true;
-  const startTravel = t0 + (handOff ? pivot * 0.85 : 0);
-  const arrive = startTravel + profile.duration;
-  const turnTime = handOff ? pivot : Math.max(pivot, profile.duration * 0.9);
-  const still = Math.max(arrive, t0 + turnTime);
-  const end = still + (handOff ? 0.06 : SLIDE_SETTLE);
-  const scale = design.scale;
-  const bulge = options.bulge;
-  const layers = baseLayers(actor);
-  let puff = 0;
-  let lastYaw = yaw0;
-
-  tl.at(t0, () => {
-    actor.planter.hold(actor.stance);
-    stage.fx.grind(a, still - t0, design.heft);
-  });
-  tl.onAbort(() => stage.fx.grindStop());
-  tl.span(t0, end - t0, (local, dt) => {
-    const t = t0 + local;
-    const tt = t - startTravel;
-    const u = distance > 1e-6 ? profile.at(tt) / distance : 1;
-    const root = actor.root;
-    root.position.lerpVectors(a, b, u);
-    // The way it is travelling at this moment (a castling rook swings out round the king).
-    _heading.subVectors(b, a);
-    if (bulge) {
-      root.position.addScaledVector(bulge, Math.sin(Math.PI * u));
-      _heading.addScaledVector(bulge, Math.PI * Math.cos(Math.PI * u));
-    }
-    _heading.y = 0;
-    const len = _heading.length();
-    const yaw = turnTime > 0 ? yaw0 + turn * ease.inOutCubic(clamp01((t - t0) / turnTime)) : yaw0;
-
-    // Lean into the motion; once stopped, rock back a little and let the weight settle.
-    const moving = profile.fraction(tt);
-    let lean = spec.lean * moving;
-    let dip = 0;
-    const after = t - still;
-    if (!handOff && after > 0) {
-      const onset = smoothstep(0, 0.08, after);
-      lean -= spec.lean * 0.45 * onset * Math.exp(-after * 8) * Math.sin(after * 15);
-      dip = 0.014 * scale * onset * Math.exp(-after * 7) * Math.sin(after * 11);
-    }
-    const lx = len > 1e-6 ? (_heading.x * Math.cos(yaw) - _heading.z * Math.sin(yaw)) / len : 0;
-    const lz = len > 1e-6 ? (_heading.x * Math.sin(yaw) + _heading.z * Math.cos(yaw)) / len : 0;
-    root.position.y = -dip;
-    root.rotation.set(lean * lz, yaw, -lean * lx, 'YXZ');
-    setBase(layers, 1, 0);
-    actor.animate(layers, dt, false);
-
-    // Dust where the feet scrape: more of it the faster they go, or turn.
-    const turning = dt > 0 ? Math.min(1, Math.abs(yaw - lastYaw) / dt / spec.pivot) * 0.6 : 0;
-    lastYaw = yaw;
-    const scraping = Math.max(moving, turning);
-    puff += dt * scraping;
-    if (puff > 0.085 && scraping > 0.08) {
-      puff = 0;
-      if (len > 1e-6) _dir.copy(_heading).divideScalar(len);
-      else _dir.set(0, 0, 0);
-      for (const bone of ['ball_l', 'ball_r']) {
-        actor.instance.byName.get(bone)?.getWorldPosition(_v);
-        stage.fx.scrape(_v, _dir, scraping);
-      }
-    }
-  });
-  tl.at(still, () => {
-    stage.fx.grindStop();
-    if (!handOff) stage.fx.settle(b, design.heft * 0.6);
-  });
-  tl.at(end, () => {
-    actor.root.position.copy(b);
-    actor.root.rotation.set(0, yawEnd, 0);
-    if (handOff) actor.planter.release();
-    else actor.rest();
-  });
-  return end;
-}
-
 export interface TurnOptions {
   /** Rise out of the frozen pose while turning: a statue about to fight, or to be fought. */
   rise?: boolean;
   /** Radians per second for a statue that turns on its feet (default: a brisk turn). */
   rate?: number;
+}
+
+/** Radians per second at which a statue turns on its feet: a strutting one never faster than its own rate. */
+function turnRate(actor: Actor, options: TurnOptions): number {
+  const rate = options.rate ?? TURN_RATE;
+  const strut = actor.design.strut;
+  return strut ? Math.min(rate, strut.turn) : rate;
 }
 
 /** How long `planTurn` takes, so a planner can allow for it before laying it down. */
@@ -534,15 +472,14 @@ export function turnDuration(actor: Actor, delta: number, options: TurnOptions =
   const size = Math.abs(delta);
   const rising = options.rise && actor.upright !== actor.frozen ? (design.rise ?? 0) + 0.1 : 0;
   if (size < 0.03) return rising;
-  if (design.slide) return pivotDuration(design.slide, delta) + 0.06;
   if (design.glide?.turns) return glideTimes(design.glide, 0, delta, true).end;
-  return Math.max(0.18 + size / (options.rate ?? TURN_RATE) + 0.3, rising);
+  return Math.max(0.18 + size / turnRate(actor, options) + 0.3, rising);
 }
 
 /**
  * Turn on the spot from one heading to another, in the manner of the statue's kind: a walker
- * holds its pose and the foot planter turns the swivel into a shuffle of steps; a slider
- * grinds round on planted feet; a statue that turns in the air lifts a little and comes round.
+ * holds its pose and the foot planter turns the swivel into a shuffle of steps; a statue
+ * that turns in the air lifts a little and comes round.
  * With `rise`, a statue whose frozen pose is not upright stands up as it turns (and does so
  * even if there is no turn to make). Returns the time it is done.
  */
@@ -552,16 +489,14 @@ export function planTurn(tl: Timeline, stage: Stage, actor: Actor, at: THREE.Vec
   const total = turnDuration(actor, delta, options);
   if (total <= 0) return t0;
   const turns = Math.abs(delta) >= 0.03;
-  if (turns && design.slide) return planSlide(tl, stage, actor, at, at, t0, { startYaw: fromYaw, finalYaw: toYaw, handOff: true });
   if (turns && design.glide?.turns) return planGlide(tl, stage, actor, at, at, t0, { startYaw: fromYaw, finalYaw: toYaw, hop: true });
 
   const position = at.clone();
-  const turn = turns ? 0.18 + Math.abs(delta) / (options.rate ?? TURN_RATE) : 0;
+  const turn = turns ? 0.18 + Math.abs(delta) / turnRate(actor, options) : 0;
   const rise = options.rise && actor.upright !== actor.frozen ? design.rise ?? 0 : 0;
   const end = t0 + total;
   const layers = baseLayers(actor);
   tl.at(t0, () => {
-    actor.planter.release();
     actor.planter.enabled = true;
   });
   tl.span(t0, end - t0, (local, dt) => {
@@ -580,21 +515,17 @@ export function planTravel(tl: Timeline, stage: Stage, actor: Actor, from: THREE
       return planLeap(tl, stage, actor, from, to, t0, options);
     case 'glide':
       return planGlide(tl, stage, actor, from, to, t0, options);
-    case 'slide':
-      return planSlide(tl, stage, actor, from, to, t0, options);
     default:
       return planWalk(tl, stage, actor, from, to, t0, options);
   }
 }
 
 /**
- * How a statue takes the square it has just cleared, from where it struck: a slider is
- * dragged onto it, a statue that floats onto squares lifts over the rubble, and the rest go
- * on foot (they are already standing, so they do not rise again first).
+ * How a statue takes the square it has just cleared, from where it struck: a statue that
+ * floats onto squares lifts over the rubble, and the rest go on foot (they are already standing, so they do not rise again first).
  */
 export function planStepOn(tl: Timeline, stage: Stage, actor: Actor, from: THREE.Vector3, to: THREE.Vector3, t0: number, fromYaw: number, toYaw: number): number {
   const design = actor.design;
-  if (design.slide) return planSlide(tl, stage, actor, from, to, t0, { startYaw: fromYaw, finalYaw: toYaw });
   if (design.glide?.floatsOn) return planGlide(tl, stage, actor, from, to, t0, { startYaw: fromYaw, finalYaw: toYaw, hop: true });
   return planWalk(tl, stage, actor, from, to, t0, { startYaw: fromYaw, finalYaw: toYaw, risen: true });
 }

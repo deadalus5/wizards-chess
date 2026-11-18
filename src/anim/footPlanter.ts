@@ -9,26 +9,7 @@ import { solveTwoBone } from './ik';
  * where it touched down and bends the leg to reach it (two-bone IK). When the pose has moved
  * too far from the pinned spot it takes a real step there, lifting the foot. Turning on the
  * spot therefore becomes a shuffle of small steps instead of a frictionless swivel.
- *
- * A statue that is dragged rather than walks uses the other mode, `hold`: its feet are held
- * where its frozen stance puts them relative to the statue itself, soles flat, and never step.
  */
-
-/** Where a statue's frozen stance puts one foot, in the statue's own ground frame at scale 1. */
-export interface FootHold {
-  /** The ball of the foot: x to the statue's left, y above the floor, z ahead. */
-  ball: THREE.Vector3;
-  /** The foot's orientation in the armature's frame. */
-  rotation: THREE.Quaternion;
-}
-
-interface Held {
-  stance: readonly [FootHold, FootHold];
-  /** Where each foot was when the hold began: the same frame, but in metres. */
-  from: { ball: THREE.Vector3; rotation: THREE.Quaternion }[];
-  time: number;
-  ease: number;
-}
 
 interface Foot {
   thigh: THREE.Object3D;
@@ -55,11 +36,6 @@ const A = new THREE.Vector3();
 const B = new THREE.Vector3();
 const T = new THREE.Vector3();
 const pole = new THREE.Vector3();
-const ahead = new THREE.Vector3();
-const pin = new THREE.Vector3();
-const UP = new THREE.Vector3(0, 1, 0);
-const qYaw = new THREE.Quaternion();
-const qSole = new THREE.Quaternion();
 const qPelvis = new THREE.Quaternion();
 const qThigh = new THREE.Quaternion();
 const qCalf = new THREE.Quaternion();
@@ -71,9 +47,9 @@ const qb = new THREE.Quaternion();
 
 /**
  * Bend thigh and calf so the ankle reaches `target`, keeping the knee's direction. The foot
- * keeps its world orientation, or takes `sole` if one is given.
+ * keeps its world orientation.
  */
-function solveLeg(f: Foot, target: THREE.Vector3, sole?: THREE.Quaternion): void {
+function solveLeg(f: Foot, target: THREE.Vector3): void {
   f.thigh.getWorldPosition(H);
   f.calf.getWorldPosition(K);
   f.foot.getWorldPosition(A);
@@ -90,15 +66,14 @@ function solveLeg(f: Foot, target: THREE.Vector3, sole?: THREE.Quaternion): void
   f.thigh.quaternion.copy(qPelvis).invert().multiply(qa);
   qb.copy(d2).multiply(d1).multiply(qCalf); // calf world
   f.calf.quaternion.copy(qa).invert().multiply(qb);
-  f.foot.quaternion.copy(qb).invert().multiply(sole ?? qFoot);
+  f.foot.quaternion.copy(qb).invert().multiply(qFoot);
 }
 
 export class FootPlanter {
   enabled = false;
-  /** Steps taken since the last reset (for checking that a slide takes none). */
+  /** Steps taken since the last reset. */
   steps = 0;
   private readonly feet: Foot[];
-  private held: Held | null = null;
 
   constructor(
     private readonly root: THREE.Object3D,
@@ -116,87 +91,13 @@ export class FootPlanter {
     });
   }
 
-  /** Forget all pins and any hold (call when the statue is frozen or teleported). */
+  /** Forget all pins (call when the statue is frozen or teleported). */
   reset(): void {
-    this.held = null;
     this.steps = 0;
     for (const f of this.feet) {
       f.locked = false;
       f.stepping = false;
       f.weight = 0;
-    }
-  }
-
-  /** True while the feet are held to the statue's stance rather than pinned to the floor. */
-  get holding(): boolean {
-    return this.held !== null;
-  }
-
-  /**
-   * Hold the feet where the frozen stance puts them relative to the statue itself: flat on the
-   * floor, sliding and turning with it, never stepping. `ease` seconds are taken to bring them
-   * there from wherever they are now, so nothing jumps.
-   */
-  hold(stance: readonly [FootHold, FootHold], ease = 0.25): void {
-    this.enabled = true;
-    this.root.updateMatrixWorld(true);
-    qYaw.setFromAxisAngle(UP, -this.heading());
-    const from = this.feet.map((f) => {
-      f.locked = false;
-      f.stepping = false;
-      f.weight = 1;
-      const ball = f.ball.getWorldPosition(new THREE.Vector3());
-      ball.x -= this.root.position.x;
-      ball.z -= this.root.position.z;
-      ball.applyQuaternion(qYaw);
-      return { ball, rotation: f.foot.getWorldQuaternion(new THREE.Quaternion()).premultiply(qYaw) };
-    });
-    this.held = { stance, from, time: 0, ease };
-  }
-
-  /**
-   * Stop holding: the feet go back to being pinned to the floor, where they now are. If the
-   * pose then wants them elsewhere they step there, as after any other move.
-   */
-  release(): void {
-    if (!this.held) return;
-    this.held = null;
-    this.root.updateMatrixWorld(true);
-    for (const f of this.feet) {
-      f.ball.getWorldPosition(f.pin);
-      f.locked = true;
-      f.stepping = false;
-      f.weight = 1;
-    }
-  }
-
-  /** The way the statue faces on the ground, whatever its lean. */
-  private heading(): number {
-    ahead.set(0, 0, 1).transformDirection(this.root.matrixWorld);
-    return Math.atan2(ahead.x, ahead.z);
-  }
-
-  private updateHeld(dt: number): void {
-    const held = this.held!;
-    held.time += dt;
-    const u = held.ease > 0 ? Math.min(1, held.time / held.ease) : 1;
-    const k = u * u * (3 - 2 * u);
-    const scale = this.root.scale.x;
-    qYaw.setFromAxisAngle(UP, this.heading());
-    for (let i = 0; i < 2; i++) {
-      const f = this.feet[i];
-      const want = held.stance[i];
-      const from = held.from[i];
-      // Where the ball of the foot belongs and how the sole sits, in the statue's ground frame.
-      pin.copy(want.ball).multiplyScalar(scale).sub(from.ball).multiplyScalar(k).add(from.ball);
-      pin.applyQuaternion(qYaw);
-      pin.x += this.root.position.x;
-      pin.z += this.root.position.z;
-      qSole.copy(from.rotation).slerp(want.rotation, k).premultiply(qYaw);
-      // The ankle goes wherever puts the ball there with the sole lying as it should.
-      T.copy(f.ball.position).multiplyScalar(scale).applyQuaternion(qSole);
-      T.subVectors(pin, T);
-      solveLeg(f, T, qSole);
     }
   }
 
@@ -208,10 +109,6 @@ export class FootPlanter {
   update(dt: number, settled: boolean): void {
     if (!this.enabled) return;
     this.root.updateMatrixWorld(true);
-    if (this.held) {
-      this.updateHeld(dt);
-      return;
-    }
     const scale = this.root.scale.x;
     const stepAt = (settled ? 0.012 : 0.06) * scale;
     const forceAt = 0.15 * scale;

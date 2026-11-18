@@ -39,7 +39,6 @@ function fft(re: Float32Array, im: Float32Array): void {
 const SOUNDS: Record<string, [number, (s: Synth, t: number) => void]> = {
   'footstep light': [0.8, (s, t) => s.footstep(t, 0.2)],
   'footstep heavy': [0.9, (s, t) => s.footstep(t, 1)],
-  'grind 2 s': [2.8, (s, t) => void s.grind(t, 2, 1)],
   landing: [1.4, (s, t) => s.landing(t, 0.8)],
   whoosh: [0.9, (s, t) => s.whoosh(t, 1)],
   'impact stagger': [1.6, (s, t) => s.impact(t, 0.45)],
