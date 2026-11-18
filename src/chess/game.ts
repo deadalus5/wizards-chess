@@ -108,6 +108,17 @@ export class ChessGame {
     return this.describe(move);
   }
 
+  /**
+   * The legal move a coordinate move (`e2e4`, `e7e8q`) names in the current position, or null.
+   * A promotion must name its piece; a non-promotion must not.
+   */
+  legalUci(uci: string): Move | null {
+    const m = /^([a-h][1-8])([a-h][1-8])([qrbn])?$/.exec(uci.trim().toLowerCase());
+    if (!m) return null;
+    const [, from, to, promotion] = m;
+    return this.chess.moves({ square: from as Square, verbose: true }).find((x) => x.to === to && (x.promotion ?? undefined) === (promotion ?? undefined)) ?? null;
+  }
+
   /** Take back the last move; returns it, or null at the start of the game. */
   undo(): Move | null {
     return this.chess.undo();

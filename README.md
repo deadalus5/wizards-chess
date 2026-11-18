@@ -1,6 +1,6 @@
 # Stonewake
 
-A cinematic chess game for two players at one screen. The pieces are living stone statues: they
+A cinematic chess game for two players at one screen, or one player against the computer. The pieces are living stone statues: they
 walk, leap and glide to their squares, and when one takes another it closes in, strikes, and the
 loser shatters.
 
@@ -24,6 +24,11 @@ download them.
 
 - Click a statue, then one of the glowing squares. Drag to orbit, scroll to zoom.
 - Hold **Space** to hurry a move along.
+- **Opponent**, top left: pass-and-play (two people, one screen), vs computer (choose Ivory or
+  Obsidian and a level: easy, medium, hard, max; the camera stays on your side and undo takes
+  back the computer's reply with your move), or auto-play (the computer plays both sides; pause
+  and resume). Remembered between visits. The computer is Stockfish (GPL v3), running in a
+  background worker; see `CREDITS.md`.
 - Buttons, bottom right: sound, cinematic captures (off keeps your own camera and skips the
   slow motion), follow the side to move, flip the view, undo, new game.
 

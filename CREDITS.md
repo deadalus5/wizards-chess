@@ -14,3 +14,17 @@ No attribution is required; the creators are credited here with thanks.
 | Sound effects | Kenney; OpenGameArt contributors | https://kenney.nl, https://opengameart.org |
 
 Quaternius and Kay Lousberg offer their packs free of charge and accept support on their own sites.
+
+## Chess engine (not CC0)
+
+The computer opponent is **Stockfish.js 19.0.1**, the "lite single-threaded" build, vendored
+unmodified in `public/engine/` (`stockfish-19-lite-single.js` and `.wasm`). It is licensed under
+the **GNU General Public License v3**; the licence text is `public/engine/Copying.txt`, served
+beside the engine. It runs as a separate program in a Web Worker and talks to the game only
+through the UCI protocol.
+
+- Stockfish.js by Nathan Rugg / Chess.com: https://github.com/nmrugg/stockfish.js (source,
+  build scripts), npm package `stockfish@19.0.1`
+- Stockfish by T. Romstad, M. Costalba, J. Kiiski, G. Linscott and the Stockfish contributors:
+  https://github.com/official-stockfish/Stockfish
+- Lite network by Chris Bao (sscg13)

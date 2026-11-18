@@ -105,3 +105,33 @@ describe('ChessGame move events', () => {
     expect(g.undo()).toBeNull();
   });
 });
+
+describe('ChessGame.legalUci (validating engine moves)', () => {
+  it('accepts legal moves and rejects illegal or wrong-side ones', () => {
+    const g = new ChessGame();
+    expect(g.legalUci('e2e4')?.san).toBe('e4');
+    expect(g.legalUci('g1f3')?.san).toBe('Nf3');
+    expect(g.legalUci('e2e5')).toBeNull();
+    expect(g.legalUci('e7e5')).toBeNull(); // Black's move on White's turn
+    expect(g.legalUci('e3e4')).toBeNull(); // empty square
+    expect(g.legalUci('nonsense')).toBeNull();
+  });
+
+  it('needs the promotion piece, and only for a promotion', () => {
+    const g = new ChessGame();
+    g.load('4k3/P7/8/8/8/8/8/4K3 w - - 0 1');
+    expect(g.legalUci('a7a8')).toBeNull();
+    expect(g.legalUci('a7a8q')?.promotion).toBe('q');
+    expect(g.legalUci('a7a8n')?.promotion).toBe('n');
+    expect(g.legalUci('e1e2q')).toBeNull();
+  });
+
+  it('finds castling and en passant', () => {
+    const g = new ChessGame();
+    g.load('r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1');
+    expect(g.legalUci('e1g1')?.isKingsideCastle()).toBe(true);
+    expect(g.legalUci('e1c1')?.isQueensideCastle()).toBe(true);
+    g.load('4k3/7p/8/3pP3/8/8/P7/4K3 w - d6 0 1');
+    expect(g.legalUci('e5d6')?.isEnPassant()).toBe(true);
+  });
+});

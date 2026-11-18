@@ -10,6 +10,19 @@ export interface HudCallbacks {
   onToggleFollow(on: boolean): void;
   onToggleSound(on: boolean): void;
   onToggleCinema(on: boolean): void;
+  onMode(mode: OpponentMode): void;
+  onSide(side: Side): void;
+  onLevel(level: OpponentLevel): void;
+  onPause(paused: boolean): void;
+}
+
+export type OpponentMode = 'pass' | 'computer' | 'auto';
+export type OpponentLevel = 'easy' | 'medium' | 'hard' | 'max';
+export interface OpponentView {
+  mode: OpponentMode;
+  side: Side;
+  level: OpponentLevel;
+  paused: boolean;
 }
 
 /** How the toggles start out. */
@@ -47,6 +60,15 @@ export class Hud {
   private readonly gameOver: HTMLElement;
   private readonly gameOverTitle: HTMLElement;
   private readonly gameOverText: HTMLElement;
+  private readonly opponent: HTMLElement;
+  private readonly modeButtons = new Map<OpponentMode, HTMLButtonElement>();
+  private readonly sideButtons = new Map<Side, HTMLButtonElement>();
+  private readonly levelButtons = new Map<OpponentLevel, HTMLButtonElement>();
+  private readonly pauseButton: HTMLButtonElement;
+  private turnSide: Side = 'w';
+  private turnCheck = false;
+  private thinking: Side | null = null;
+  private flashTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(parent: HTMLElement, callbacks: HudCallbacks, settings: HudSettings) {
     const root = el('div');
@@ -61,6 +83,38 @@ export class Hud {
     this.checkText = el('span', 'check');
     turn.append(this.chip, this.turnText, this.checkText);
     root.append(turn);
+
+    // Who plays: pass-and-play, against the computer, or the computer against itself.
+    this.opponent = el('div', 'opponent panel chrome');
+    this.opponent.append(el('h3', undefined, 'OPPONENT'));
+    const group = (cls: string): HTMLElement => {
+      const g = el('div', `seg ${cls}`);
+      this.opponent.append(g);
+      return g;
+    };
+    const choice = <T>(parent: HTMLElement, map: Map<T, HTMLButtonElement>, value: T, label: string, title: string, pick: (v: T) => void): void => {
+      const b = el('button', undefined, label);
+      b.title = title;
+      b.onclick = () => pick(value);
+      map.set(value, b);
+      parent.append(b);
+    };
+    const modes = group('modes');
+    choice(modes, this.modeButtons, 'pass', 'PASS & PLAY', 'Two players at one board', callbacks.onMode);
+    choice(modes, this.modeButtons, 'computer', 'VS COMPUTER', 'Play against the engine', callbacks.onMode);
+    choice(modes, this.modeButtons, 'auto', 'AUTO-PLAY', 'Watch the engine play itself', callbacks.onMode);
+    const sides = group('sides');
+    choice(sides, this.sideButtons, 'w', 'PLAY IVORY', 'You play Ivory; the computer plays Obsidian', callbacks.onSide);
+    choice(sides, this.sideButtons, 'b', 'PLAY OBSIDIAN', 'You play Obsidian; the computer plays Ivory', callbacks.onSide);
+    const levels = group('levels');
+    for (const [lv, name] of [['easy', 'EASY'], ['medium', 'MEDIUM'], ['hard', 'HARD'], ['max', 'MAX']] as [OpponentLevel, string][]) {
+      choice(levels, this.levelButtons, lv, name, `Engine strength: ${name.toLowerCase()}`, callbacks.onLevel);
+    }
+    const pause = group('pause');
+    this.pauseButton = el('button', undefined, 'PAUSE');
+    this.pauseButton.onclick = () => callbacks.onPause(this.pauseButton.dataset.paused !== '1');
+    pause.append(this.pauseButton);
+    root.append(this.opponent);
 
     const moves = el('div', 'moves panel chrome');
     moves.append(el('h3', undefined, 'MOVES'));
@@ -127,9 +181,43 @@ export class Hud {
   }
 
   setTurn(side: Side, check: boolean): void {
-    this.chip.className = `chip ${side}`;
-    this.turnText.textContent = `${SIDE_NAME[side].toUpperCase()} TO MOVE`;
-    this.checkText.textContent = check ? 'CHECK' : '';
+    this.turnSide = side;
+    this.turnCheck = check;
+    this.renderTurn();
+  }
+
+  /** Show that the computer is choosing a move for `side` (null: it is not). */
+  setThinking(side: Side | null): void {
+    this.thinking = side;
+    this.renderTurn();
+  }
+
+  /** A short message in the turn bar for a few seconds. */
+  flash(message: string): void {
+    if (this.flashTimer) clearTimeout(this.flashTimer);
+    this.turnText.textContent = message;
+    this.flashTimer = setTimeout(() => {
+      this.flashTimer = null;
+      this.renderTurn();
+    }, 4000);
+  }
+
+  private renderTurn(): void {
+    const side = this.thinking ?? this.turnSide;
+    this.chip.className = `chip ${side}${this.thinking ? ' thinking' : ''}`;
+    if (!this.flashTimer) this.turnText.textContent = `${SIDE_NAME[side].toUpperCase()} ${this.thinking ? 'IS THINKING' : 'TO MOVE'}`;
+    this.checkText.textContent = this.turnCheck ? 'CHECK' : '';
+  }
+
+  /** Show the opponent choices as they stand. */
+  setOpponent(v: OpponentView): void {
+    for (const [m, b] of this.modeButtons) b.setAttribute('aria-pressed', String(m === v.mode));
+    for (const [s, b] of this.sideButtons) b.setAttribute('aria-pressed', String(s === v.side));
+    for (const [l, b] of this.levelButtons) b.setAttribute('aria-pressed', String(l === v.level));
+    this.opponent.dataset.mode = v.mode;
+    this.pauseButton.dataset.paused = v.paused ? '1' : '0';
+    this.pauseButton.textContent = v.paused ? 'RESUME' : 'PAUSE';
+    this.pauseButton.setAttribute('aria-pressed', String(!v.paused));
   }
 
   setMoves(san: readonly string[]): void {

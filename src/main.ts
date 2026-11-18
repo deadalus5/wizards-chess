@@ -2,6 +2,8 @@
 import './debug/consoleTap';
 import * as THREE from 'three';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
+import { Engine } from './ai/engine';
+import { Opponent } from './ai/opponent';
 import { ALL_CLIPS } from './anim/clips';
 import { analyzeGait, type Gait } from './anim/gait';
 import { GameAudio } from './audio/audio';
@@ -115,6 +117,7 @@ async function boot(): Promise<void> {
   let controller!: GameController;
   let director!: Director;
   let cinema!: Cinema;
+  let opponent!: Opponent;
   const setCinematic = (on: boolean): void => {
     cinema.enabled = on;
     director.slowMotionEnabled = on;
@@ -123,12 +126,16 @@ async function boot(): Promise<void> {
   const hud = new Hud(
     document.body,
     {
-      onUndo: () => void controller.undo(),
-      onNewGame: () => controller.start(),
+      onUndo: () => void opponent.undo(),
+      onNewGame: () => opponent.newGame(),
       onFlip: () => rig.viewFor(rig.nearestSide() === 'w' ? 'b' : 'w'),
       onToggleFollow: (on) => controller.setFollow(on),
       onToggleSound: (on) => audio.setEnabled(on),
       onToggleCinema: setCinematic,
+      onMode: (mode) => opponent.setMode(mode),
+      onSide: (side) => opponent.setSide(side),
+      onLevel: (level) => opponent.setLevel(level),
+      onPause: (paused) => opponent.setPaused(paused),
     },
     { follow: localStorage.getItem('stonewake.follow') !== '0', sound: audio.on, cinema: cinematic },
   );
@@ -167,8 +174,11 @@ async function boot(): Promise<void> {
   });
   setCinematic(cinematic);
   controller = new GameController({ game, cast, markers, hud, picker, rig, dom, presenter: director, sound: audio });
+  // The computer: Stockfish in a worker, loaded only once a mode needs it.
+  const engine = new Engine();
+  opponent = new Opponent({ controller, game, engine, hud, speed: () => director.baseSpeed });
   controller.start();
-  rig.viewFor('w', true);
+  rig.viewFor(opponent.mode === 'computer' ? opponent.humanSide : 'w', true);
 
   const stress = { repeat: 1 };
   const gpuTimer = new GpuTimer(pipeline.renderer.getContext() as WebGL2RenderingContext);
@@ -212,6 +222,8 @@ async function boot(): Promise<void> {
   const warmed = warmUp({ pipeline, cast, fx, markers, stage: director.stage, physics });
   const boot = { warmUpMs: Math.round(performance.now() - warmStart), ...warmed };
   loop.start();
+  // Only now does the computer join (it would otherwise move during the warm-up).
+  opponent.apply();
   loading.progress(1, 'Ready');
   loading.done();
 
@@ -234,7 +246,7 @@ async function boot(): Promise<void> {
     });
   }
 
-  installDebugApi({ scene, camera, pipeline, lights, cast, kit, loop, rig, game, controller, markers, perf, stress, director, frame, shatter, cinema, reflection, boot });
+  installDebugApi({ scene, camera, pipeline, lights, cast, kit, loop, rig, game, controller, markers, perf, stress, director, frame, shatter, cinema, reflection, boot, engine, opponent });
 }
 
 boot().catch((err) => {

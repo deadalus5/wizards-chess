@@ -2,16 +2,20 @@
 
 Working notes for whoever continues this build (human or agent). The approved plan is at
 `~/.claude/plans/golden-kindling-moth.md` (the movement and captures session of 2026-11-17 had
-its own: `~/.claude/plans/pasted-content-id-af0a-read-devnotes-md-temporal-spring.md`); this file
+its own: `~/.claude/plans/pasted-content-id-af0a-read-devnotes-md-temporal-spring.md`; the
+computer opponent: `~/.claude/plans/add-a-computer-opponent-wiggly-metcalfe.md`); this file
 records what exists, how to verify it, the numbers already measured, and what is left. Update it
 when any of that changes.
 
 ## Ground rules from the owner
 
-- Cinematic 3D "living statue" chess, local pass-and-play on desktop. Visual quality and motion
+- Cinematic 3D "living statue" chess on desktop: local pass-and-play, against the computer, or
+  the computer against itself. Visual quality and motion
   come first; movement and captures must be smooth and film-like, never janky.
 - On a capture the attacker physically moves in, attacks, and destroys the captured piece.
-- Chess rules come from chess.js; do not hand-roll rules.
+- Chess rules come from chess.js; do not hand-roll rules. Do not write a chess engine: the
+  computer is Stockfish (see "Computer opponent"), and every move it proposes is checked by
+  chess.js before it is played.
 - Original design: own title ("Stonewake", working), setting and piece designs. No names, looks or
   characters from existing games or films.
 - Look at what is built (screenshots, frame strips) and measure frame rate; iterate until it is
@@ -40,10 +44,17 @@ npm run dev        # Vite on http://localhost:5173 (strict port); game at /, cli
 npm run assets     # re-download CC0 assets into public/assets (idempotent; archives cached in .cache/)
 npm run typecheck  # tsc --noEmit
 npm test           # vitest: rules wrapper, timeline, shot chooser, frame loop, pacing, pose tools,
-                   # strike planning, the choice between attacks (52 tests)
+                   # strike planning, the choice between attacks, the engine wrapper (worker
+                   # mocked: UCI parsing, promotion suffix, stale replies), undo rule (73 tests)
 npm run build      # tsc + vite build into dist/ (checked: `vite preview` loads and plays captures)
 node scripts/verify.mjs [passes=2] [speed=20]   # 30 scripted games in the test browser (see below)
 ```
+
+Testing the computer opponent (in the test browser, `?dev`): `__sw.staleTest()` (every
+`appliedLate` 0), `__sw.autoVerify({ games: 3, speed: 20, level: 'easy' })` (`problems` empty),
+`__sw.perfAuto(14, { level: 'hard' })` (`searchSlow` 0), then `__sw.ai('computer', { side: 'w' })`
+and play with `__sw.click(sq)` in real time. Each helper leaves the opponent in pass-and-play
+with its default settings.
 
 Add `?dev` to the address to skip the title screen (the test scripts all do; without it the
 camera drifts round the hall until a click). The debug API `window.__sw` is always installed.
@@ -128,6 +139,18 @@ camera drifts round the hall until a click). The debug API `window.__sw` is alwa
     what); `boot` (`warmUpMs`, `strikesMs`).
   - Stills of one attack: set `captureTuning.variant`, read `timing()` for `marks.top` and
     `marks.blow`, then `scripts/keyframes.sh` at top, blow + 0.04, blow + 0.3, blow + 0.95.
+  - Added for the computer opponent: `ai(mode, opts)` (mode `'pass' | 'computer' | 'auto'`;
+    opts `side`, `level` `'easy' | 'medium' | 'hard' | 'max'`, `skill` / `movetime` to override
+    the level (null clears), `pauseMs` (null: the natural pause), `restart`, `maxPlies`,
+    `resultHoldMs`, `paused`); `aiState()` (mode, generation, thinking, requests / applied /
+    stale / errors, finished games and results, search times); `autoVerify({games, speed, level,
+    movetime, maxPlies, fen})` (engine plays itself at speed, the board checked after every
+    move as `verify` does, plus renderer memory before and after); `perfAuto(plies, {level,
+    movetime, renderWidth, fen})` (frame times while the engine plays itself in real time;
+    `searchFrames` / `searchSlow` count frames, and slow frames, while a search was running);
+    `staleTest(movetime)` (new game, undo, mode switch and side switch while the engine is
+    thinking: `appliedLate` must be 0; also a superseded raw request). `engine` and `opponent`
+    are exposed too. `verify` switches the opponent to pass-and-play first.
 - `window.__lab` (clip lab): `show(clip,t,prop)`, `look(...)`, `setTime(t)`, `tipTrack()` (weapon
   tip speed peaks = candidate hit times), `state`.
 - **Frame cost:** WebGL timer queries are misleading on this GPU (it clocks down under light load
@@ -278,6 +301,28 @@ and the fracture both read. Run these before and after, and compare:
     125-155 ms of it; it was 400 ms until the search stopped working out the weapon's window
     afresh for each candidate placing (`SweepWindow`) and the weapon path stopped working out
     the whole skeleton (`bonesTo`).
+- Computer opponent session (2026-11-17):
+  - Engine start (worker, WASM compile, UCI handshake): 37-39 ms, three loads. Search times are
+    the level's `movetime` (250 / 500 / 1000 / 2000 ms) to within 2 ms; a forced reply comes
+    back in about 2 ms.
+  - Auto-play at 20x, easy, board checked after every move (`autoVerify`): 858 engine moves
+    over seven games, all ending in mate (81-159 plies), 153 captures, 13 castles, 5
+    promotions, no problems, no move proposed that chess.js rejected. En passant did not come
+    up in these games; it is covered by the scripted games and by `legalUci` tests.
+  - Frame cost while the engine plays itself in real time (`perfAuto(14)`, hard, 3200x1720,
+    60 Hz): 3397 frames in 56.6 s, none missed, CPU median 2.4 / p99 3.9 / max 5.3 ms (the one
+    frame over 5 ms fell during a capture, with no search running). 840 frames fell during a
+    search; none of them was over 5 ms or late. The engine stays off the main thread.
+  - Late replies (`staleTest`): new game, undo, mode switch and side switch each made while the
+    engine was mid-search: 0 moves applied late, 4 replies dropped; a superseded raw request
+    resolves null and the next one still answers.
+  - Renderer memory: geometries and programs flat (100 / 52). Textures 101 on a fresh load,
+    102-104 after auto-play runs, 103 again after scripted games on the same page: it moves by
+    one or two and comes back, so not a per-move leak, but not explained either (see "Not done").
+  - Seen in real time vs computer (stills): the turn bar's "OBSIDIAN IS THINKING", the camera
+    staying behind the human (both sides), the computer's rook capture through its cinematic,
+    the computer's promotion with check, undo taking back two moves, clicks on the computer's
+    statues ignored on its turn, auto-play restarting after mate, pause and resume.
 - Attack clips as used now: hit time and top of the wind-up in seconds, from `weaponPath` on
   the real statues. Spear_Thrust 0.45, top set by hand at 0.25 (the spear is still until 0.2,
   the drive is 0.3-0.45, the fast part at 0.52 is the recovery). Two_Handed_Overhead_Slam
@@ -487,6 +532,39 @@ and the fracture both read. Run these before and after, and compare:
 - **Frame loop** (`core/loop.ts`): steps the game by whole refresh intervals (callback
   timestamps jitter), forgives single missed frames, catches up only under sustained slowness,
   uses the display's full rate when it is 100 Hz or more and falls back to an even 60.
+- **Computer opponent** (`src/ai`): Stockfish.js 19.0.1 "lite single-threaded", vendored
+  unmodified in `public/engine/` (28 KB JS + 1.8 MB WASM + `Copying.txt`; GPL v3, credited in
+  CREDITS.md). Single-threaded needs no SharedArrayBuffer, so no COOP/COEP headers: it runs on
+  GitHub Pages as is. Its URL is built from `BASE_URL` (`ENGINE_URL` in `engine.ts`). Not an npm
+  dependency: the package is 205 MB with the full networks. To update it, fetch
+  `bin/stockfish-<v>-lite-single.{js,wasm}` and `Copying.txt` from the npm tarball and change
+  `ENGINE_URL`.
+  - `engine.ts` (`Engine`): worker wrapper. `init()` (uci / uciok, isready / readyok, lazy),
+    `newGame()` (ucinewgame), `bestMove(fen, {skill, movetime})` resolves UCI or null, `stop()`,
+    `dispose()`. One search at a time: UCI answers every `go` with one `bestmove`, even after
+    `stop`, so a new request stops the current one and is only sent once the stale answer has
+    come back (which is thrown away). `info` lines are skipped unparsed. Levels (`LEVELS`):
+    easy skill 1 / 250 ms, medium 6 / 500, hard 13 / 1000, max 20 / 2000.
+  - `opponent.ts` (`Opponent`): the mode (pass-and-play / vs computer with the human's side /
+    auto-play with pause), remembered in localStorage (`stonewake.mode`, `.side`, `.level`).
+    `GameController.onSettled` (after a new game, an undo, or a move has played out, busy
+    cleared, so never during a cinematic or the promotion dialog) calls `poke()`, which asks
+    for a move if it is the engine's turn. The search runs during a natural pause (0.7-1.2 s
+    vs computer, 1.0 s in auto-play, divided by `director.baseSpeed`); the move is played when
+    both are done, and only if the request's token, `controller.generation` (bumped by every
+    move, undo and new game) and the FEN all still match. Anything else counts as `stale`.
+    Moves are checked by `ChessGame.legalUci` (chess.js) and played by
+    `GameController.playUci`, which calls the same `move()` a click does: every cinematic
+    plays. Undo (`undoPlies`): vs computer on your turn takes back its reply and your move,
+    while it thinks only your move; auto-play pauses and takes back one. Auto-play leaves the
+    result up for 6 s, then starts a new game (`restart`), and calls a game off at 300 plies.
+    If the engine fails, the turn bar says THE ENGINE IS SILENT and the mode drops to
+    pass-and-play.
+  - Controller: `inputSides` (clicks and hover markers only for the human's side), `seat`
+    (vs computer the camera stays behind the human; follow-turn does not swing to the
+    computer), `generation`, `undo(plies)`.
+  - HUD: OPPONENT panel top left (mode; side and level vs computer; level and pause in
+    auto-play); the turn bar says "OBSIDIAN IS THINKING" with a pulsing chip during a search.
 - **Interface:** title screen (`Hud.showTitle`), toggles for sound, cinematic captures (off:
   no cut, no slow motion) and follow-turn, all remembered in localStorage.
 - **Warm-up** (`src/core/warmup.ts`): behind the loading screen it rehearses a break in the
@@ -550,3 +628,9 @@ and the fracture both read. Run these before and after, and compare:
      its feet until they dissolve.
    - The mated king stays in the cast, invisible, after its stone has gone (so undo can
      restore it).
+   - Computer opponent: the renderer's texture count drifts by one or two over long auto-play
+     runs and comes back (see "Measured"); not traced. The engine has no opening variety
+     beyond what low skill levels add, so auto-play games at max level can repeat.
+     `npm run preview` serves at `/` with this Vite (the `base` is only applied on build), so
+     check Pages paths in the built bundle, not through preview. Stockfish is GPL v3: keep
+     `public/engine/Copying.txt` and the CREDITS entry with it.

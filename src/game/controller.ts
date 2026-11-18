@@ -44,7 +44,13 @@ export class GameController {
   private hovered: string | null = null;
   private busy = false;
   private readonly events: MoveEvent[] = [];
+  private readonly settled: (() => void)[] = [];
+  private gen = 0;
   followTurn: boolean;
+  /** Sides whose moves are made by clicking (the computer's side is left out). */
+  inputSides = new Set<Side>(['w', 'b']);
+  /** If set, the camera stays on this side's seat instead of following the turn (vs computer). */
+  seat: Side | null = null;
 
   constructor(private readonly d: ControllerDeps) {
     this.followTurn = localStorage.getItem('stonewake.follow') !== '0';
@@ -66,9 +72,34 @@ export class GameController {
     return this.busy;
   }
 
+  /** Bumped whenever the position changes (move, undo, new game): stale work compares it. */
+  get generation(): number {
+    return this.gen;
+  }
+
+  /** Called whenever the board comes to rest: after a new game, an undo, or a move has played out. */
+  onSettled(listener: () => void): void {
+    this.settled.push(listener);
+  }
+
+  private notifySettled(): void {
+    for (const l of this.settled) l();
+  }
+
+  /** Swing to the side to move, or to the human's seat when playing the computer. */
+  private seatCamera(instant = false): void {
+    if (this.seat) this.d.rig.viewFor(this.seat, instant);
+    else if (this.followTurn) this.d.rig.viewFor(this.d.game.turn(), instant);
+  }
+
+  private get inputOpen(): boolean {
+    return this.inputSides.has(this.d.game.turn() as Side);
+  }
+
   /** Set up the starting position (or any FEN). */
   start(fen?: string): void {
-    const { game, cast, hud, rig } = this.d;
+    const { game, cast, hud } = this.d;
+    this.gen++;
     if (fen) game.load(fen);
     else game.reset();
     this.events.length = 0;
@@ -77,7 +108,8 @@ export class GameController {
     cast.setPosition(game.board() as BoardArray);
     hud.hideGameOver();
     this.refresh();
-    if (this.followTurn) rig.viewFor(game.turn());
+    this.seatCamera();
+    this.notifySettled();
   }
 
   private hover(square: string | null): void {
@@ -86,7 +118,7 @@ export class GameController {
     const { markers, game, cast, dom } = this.d;
     markers.clear('hover');
     let pointer = false;
-    if (square && !this.busy) {
+    if (square && !this.busy && this.inputOpen) {
       const isTarget = this.targets.some((t) => t.to === square);
       const own = cast.at(square)?.side === game.turn() && !game.status().over;
       if (isTarget || own) {
@@ -121,7 +153,7 @@ export class GameController {
   async click(square: string | null): Promise<void> {
     const { game, cast } = this.d;
     if (this.busy || game.status().over) return;
-    if (!square) return this.select(null);
+    if (!square || !this.inputOpen) return this.select(null);
     const target = this.targets.find((t) => t.to === square);
     if (this.selected && target) {
       let promotion: PieceSymbol | undefined;
@@ -138,9 +170,10 @@ export class GameController {
 
   /** Play a move and wait for it to finish on the board. Throws if the move is illegal. */
   async move(from: string, to: string, promotion?: PieceSymbol): Promise<void> {
-    const { game, cast, hud, presenter, rig } = this.d;
+    const { game, cast, hud, presenter } = this.d;
     if (this.busy) throw new Error('a move is already playing');
     const event = game.play(from, to, promotion);
+    this.gen++;
     this.events.push(event);
     this.busy = true;
     hud.setBusy(true);
@@ -161,26 +194,65 @@ export class GameController {
       this.refresh();
       const status = game.status();
       if (status.check && !status.checkmate) this.d.sound?.check();
-      if (this.followTurn && !status.over) rig.viewFor(game.turn());
+      if (!status.over) this.seatCamera();
+      this.notifySettled();
     }
   }
 
-  async undo(): Promise<void> {
+  /**
+   * Play a move given in coordinate notation (`e2e4`, `e7e8q`), as the computer does. chess.js
+   * must find it legal in the current position first; otherwise it throws and nothing changes.
+   * From there it takes exactly the path a clicked move takes.
+   */
+  async playUci(uci: string): Promise<void> {
+    const move = this.d.game.legalUci(uci);
+    if (!move) throw new Error(`illegal move ${uci} in ${this.d.game.fen()}`);
+    this.select(null);
+    return this.move(move.from, move.to, move.promotion);
+  }
+
+  /** Take back up to `plies` moves (ignored while a move is playing). Returns how many were taken back. */
+  async undo(plies = 1): Promise<number> {
     const { game, cast } = this.d;
-    if (this.busy || !game.undo()) return;
-    this.events.pop();
+    if (this.busy) return 0;
+    let taken = 0;
+    while (taken < plies && game.undo()) {
+      this.events.pop();
+      taken++;
+    }
+    if (!taken) return 0;
+    this.gen++;
     this.select(null);
     this.d.presenter.reset?.();
     cast.setPosition(game.board() as BoardArray);
     this.d.hud.hideGameOver();
     this.refresh();
-    if (this.followTurn) this.d.rig.viewFor(game.turn());
+    this.seatCamera();
+    this.notifySettled();
+    return taken;
   }
 
   setFollow(on: boolean): void {
     this.followTurn = on;
     localStorage.setItem('stonewake.follow', on ? '1' : '0');
-    if (on) this.d.rig.viewFor(this.d.game.turn());
+    if (on && !this.seat) this.d.rig.viewFor(this.d.game.turn());
+  }
+
+  /** Re-apply the camera rule (after the seat changes). */
+  reseat(): void {
+    if (!this.busy) this.seatCamera();
+  }
+
+  /** Re-check hover markers and selection after the sides open to input change. */
+  inputChanged(): void {
+    if (!this.inputOpen) this.select(null);
+    const h = this.hovered;
+    this.hovered = null;
+    this.hover(h);
+  }
+
+  get moveCount(): number {
+    return this.events.length;
   }
 
   /** Bring the HUD and the persistent markers in line with the position. */

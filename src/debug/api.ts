@@ -32,6 +32,8 @@ import { DEFAULT_LOOK } from '../render/pipeline';
 import { applyStoneLook, createShatterMaterials, type StoneLook } from '../render/stoneMaterial';
 import { audioReport } from './audioReport';
 import type { PerfRecorder } from './perf';
+import { LEVELS, type Engine, type Level } from '../ai/engine';
+import type { Mode, Opponent } from '../ai/opponent';
 
 export interface DebugDeps {
   scene: THREE.Scene;
@@ -55,6 +57,8 @@ export interface DebugDeps {
   reflection: { strength: number; enabled: boolean } | null;
   /** How long things took while the loading screen was up. */
   boot: { warmUpMs: number; strikesMs: number };
+  engine: Engine;
+  opponent: Opponent;
 }
 
 /** How far the ankle sits above the ball of the foot in a statue's frozen stance, metres. */
@@ -79,6 +83,65 @@ export function installDebugApi(d: DebugDeps): void {
   };
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
   let manualNow = performance.now() / 1000;
+  const { opponent, engine } = d;
+  /** What is wrong with the board after a move: statues that disagree with chess.js or stand off their squares. */
+  const boardProblems = (where: string): string[] => {
+    const problems: string[] = [];
+    if (!cast.matches(game.board() as Parameters<Cast['matches']>[0])) problems.push(`${where}: statues disagree with the position`);
+    const stray = cast.living().filter((a) => {
+      const c = squareCentre(a.square);
+      return Math.hypot(a.root.position.x - c.x, a.root.position.z - c.z) > 0.01 || Math.abs(a.root.position.y) > 0.01;
+    });
+    if (stray.length) problems.push(`${where}: ${stray.length} statue(s) off their square`);
+    return problems;
+  };
+  /** Record frame times while `run` plays out in real time, listing slow frames. */
+  const recordPerf = async (run: () => Promise<void>, renderWidth?: number, tag?: () => Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const before = pipeline.renderSize.width;
+    if (renderWidth) pipeline.setRenderPixels(renderWidth);
+    await sleep(300);
+    perf.start();
+    const slow: Record<string, unknown>[] = [];
+    const t0 = performance.now();
+    const push = perf.push.bind(perf);
+    perf.push = (s) => {
+      // Frames that took long on the CPU, or arrived late, with where in the move they fell.
+      if (s.cpu > 5 || s.interval > (1000 / loop.targetFps) * 1.4) slow.push({ at: +((performance.now() - t0) / 1000).toFixed(2), move: +d.director.time.toFixed(2), interval: +s.interval.toFixed(1), cpu: +s.cpu.toFixed(1), ...tag?.() });
+      push(s);
+    };
+    try {
+      await run();
+      await sleep(600);
+    } finally {
+      perf.push = push;
+    }
+    const report = perf.stop();
+    const size = pipeline.renderSize;
+    if (renderWidth) pipeline.setRenderPixels(before);
+    return { size, displayHz: Math.round(loop.displayHz), ...report, slow };
+  };
+  /** Resolves after the opponent's next `count` moves have played out, or when a game ends. */
+  /** Put back what the test helpers change on the opponent. */
+  const restoreOpponent = (): void => {
+    opponent.restart = true;
+    opponent.custom = null;
+    opponent.pauseMs = null;
+    opponent.maxPlies = 300;
+    opponent.resultHoldMs = 6000;
+  };
+  const engineMoves = (count: number, stopAtGameEnd = true): Promise<void> =>
+    new Promise((resolve) => {
+      let n = 0;
+      const done = (): void => {
+        opponent.onMoved = null;
+        opponent.onGameOver = null;
+        resolve();
+      };
+      opponent.onMoved = () => {
+        if (++n >= count) done();
+      };
+      if (stopAtGameEnd) opponent.onGameOver = done;
+    });
 
   const api = {
     ...d,
@@ -111,6 +174,8 @@ export function installDebugApi(d: DebugDeps): void {
      * chess.js. Each game is a list of coordinate moves, optionally starting from a FEN.
      */
     async verify(games: { fen?: string; moves: string[] }[], speed = 25): Promise<unknown> {
+      // Scripted moves only: the computer sits out.
+      opponent.setMode('pass');
       const before = d.director.baseSpeed;
       d.director.baseSpeed = speed;
       const problems: string[] = [];
@@ -126,12 +191,7 @@ export function installDebugApi(d: DebugDeps): void {
               break;
             }
             played++;
-            if (!api.consistent()) problems.push(`game ${g} after ${m}: statues disagree with the position`);
-            const stray = cast.living().filter((a) => {
-              const c = squareCentre(a.square);
-              return Math.hypot(a.root.position.x - c.x, a.root.position.z - c.z) > 0.01 || Math.abs(a.root.position.y) > 0.01;
-            });
-            if (stray.length) problems.push(`game ${g} after ${m}: ${stray.length} statue(s) off their square`);
+            problems.push(...boardProblems(`game ${g} after ${m}`));
           }
         }
       } finally {
@@ -705,28 +765,230 @@ export function installDebugApi(d: DebugDeps): void {
      * hitches at an impact. Optionally at a forced internal width in pixels.
      */
     async perfMoves(moves: string[], renderWidth?: number): Promise<unknown> {
-      const before = pipeline.renderSize.width;
-      if (renderWidth) pipeline.setRenderPixels(renderWidth);
-      await sleep(300);
-      perf.start();
-      const slow: { at: number; move: number; interval: number; cpu: number }[] = [];
-      const t0 = performance.now();
-      const push = perf.push.bind(perf);
-      perf.push = (s) => {
-        // Frames that took long on the CPU, or arrived late, with where in the move they fell.
-        if (s.cpu > 5 || s.interval > (1000 / loop.targetFps) * 1.4) slow.push({ at: +((performance.now() - t0) / 1000).toFixed(2), move: +d.director.time.toFixed(2), interval: +s.interval.toFixed(1), cpu: +s.cpu.toFixed(1) });
-        push(s);
-      };
-      try {
+      return recordPerf(async () => {
         for (const m of moves) await api.move(m);
-        await sleep(600);
-      } finally {
-        perf.push = push;
+      }, renderWidth);
+    },
+
+    // ---------------------------------------------------------------- computer opponent
+    engine,
+    opponent,
+    /**
+     * Choose who plays: `ai('pass')`, `ai('computer', { side: 'w', level: 'hard' })`,
+     * `ai('auto', { level: 'easy', movetime: 100, pauseMs: 0, restart: false, maxPlies: 120 })`.
+     * `skill` / `movetime` override the level (null clears the override); `paused` for auto-play.
+     */
+    ai(mode: Mode, opts: { side?: Side; level?: Level; skill?: number | null; movetime?: number | null; pauseMs?: number | null; restart?: boolean; maxPlies?: number; resultHoldMs?: number; paused?: boolean } = {}): unknown {
+      if (opts.skill !== undefined || opts.movetime !== undefined) {
+        const c = { ...(opponent.custom ?? {}) };
+        if (opts.skill !== undefined) c.skill = opts.skill ?? undefined;
+        if (opts.movetime !== undefined) c.movetime = opts.movetime ?? undefined;
+        opponent.custom = c.skill === undefined && c.movetime === undefined ? null : c;
       }
-      const report = perf.stop();
-      const size = pipeline.renderSize;
-      if (renderWidth) pipeline.setRenderPixels(before);
-      return { size, displayHz: Math.round(loop.displayHz), ...report, slow };
+      if (opts.pauseMs !== undefined) opponent.pauseMs = opts.pauseMs;
+      if (opts.restart !== undefined) opponent.restart = opts.restart;
+      if (opts.maxPlies !== undefined) opponent.maxPlies = opts.maxPlies;
+      if (opts.resultHoldMs !== undefined) opponent.resultHoldMs = opts.resultHoldMs;
+      if (opts.side) opponent.setSide(opts.side);
+      if (opts.level) opponent.setLevel(opts.level);
+      opponent.setMode(mode, opts.paused ?? (mode === opponent.mode ? opponent.paused : false));
+      return api.aiState();
+    },
+    aiState(): unknown {
+      const t = [...engine.times].sort((a, b) => a - b);
+      const q = (f: number): number => Math.round(t[Math.min(t.length - 1, Math.floor(f * t.length))] ?? 0);
+      return {
+        mode: opponent.mode,
+        humanSide: opponent.humanSide,
+        level: opponent.level,
+        search: { ...LEVELS[opponent.level], ...(opponent.custom ?? {}) },
+        paused: opponent.paused,
+        loaded: engine.loaded,
+        thinking: opponent.thinking,
+        generation: controller.generation,
+        plies: game.history().length,
+        ...opponent.stats,
+        searchMs: t.length ? { n: t.length, min: Math.round(t[0]), median: q(0.5), p90: q(0.9), max: Math.round(t[t.length - 1]) } : null,
+      };
+    },
+    /**
+     * Auto-play whole games at speed and check the board after every engine move (as `verify`
+     * does). Games start from the opening (or `fen`); each ends at mate, a draw or `maxPlies`.
+     */
+    async autoVerify(o: { games?: number; speed?: number; level?: Level; movetime?: number; maxPlies?: number; fen?: string } = {}): Promise<unknown> {
+      const games = o.games ?? 2;
+      const before = d.director.baseSpeed;
+      const memBefore = { ...pipeline.renderer.info.memory, programs: pipeline.renderer.info.programs?.length };
+      d.director.baseSpeed = o.speed ?? 20;
+      const problems: string[] = [];
+      const results: { result: string; plies: number; san: string }[] = [];
+      let moves = 0;
+      const kinds = { captures: 0, castles: 0, enPassant: 0, promotions: 0, checks: 0 };
+      const t0 = performance.now();
+      opponent.setMode('pass');
+      api.ai('auto', { level: o.level ?? 'easy', movetime: o.movetime ?? null, pauseMs: 0, restart: false, maxPlies: o.maxPlies ?? 160, paused: true });
+      try {
+        for (let g = 0; g < games; g++) {
+          opponent.newGame(o.fen);
+          const finished = new Promise<string>((resolve) => {
+            opponent.onGameOver = resolve;
+          });
+          opponent.onMoved = (uci) => {
+            moves++;
+            problems.push(...boardProblems(`game ${g} ply ${game.history().length} after ${uci}`));
+          };
+          opponent.setPaused(false);
+          const result = await finished;
+          opponent.onMoved = opponent.onGameOver = null;
+          opponent.setPaused(true);
+          const verbose = game.history();
+          results.push({ result, plies: verbose.length, san: verbose.join(' ') });
+          for (const san of verbose) {
+            if (san.includes('x')) kinds.captures++;
+            if (san.startsWith('O-O')) kinds.castles++;
+            if (san.includes('=')) kinds.promotions++;
+            if (/[+#]/.test(san)) kinds.checks++;
+          }
+          await sleep(200);
+          problems.push(...boardProblems(`game ${g} end`));
+        }
+      } finally {
+        opponent.onMoved = opponent.onGameOver = null;
+        d.director.baseSpeed = before;
+        opponent.setMode('pass');
+        restoreOpponent();
+      }
+      const memAfter = { ...pipeline.renderer.info.memory, programs: pipeline.renderer.info.programs?.length };
+      return { games, moves, seconds: +((performance.now() - t0) / 1000).toFixed(1), kinds, results, problems, memBefore, memAfter, ai: api.aiState() };
+    },
+    /**
+     * Frame times while the engine plays itself in real time for `plies` moves. Each slow frame
+     * says whether a search was running then, separating the engine from the cinematics.
+     */
+    async perfAuto(plies = 12, o: { level?: Level; movetime?: number; renderWidth?: number; fen?: string } = {}): Promise<unknown> {
+      opponent.setMode('pass');
+      api.ai('auto', { level: o.level ?? 'medium', movetime: o.movetime ?? null, pauseMs: null, restart: false, paused: true });
+      opponent.newGame(o.fen);
+      let searchFrames = 0;
+      let searchSlow = 0;
+      const push = perf.push.bind(perf);
+      const out = await recordPerf(
+        async () => {
+          const wrapped = perf.push;
+          perf.push = (s) => {
+            if (opponent.thinking) {
+              searchFrames++;
+              if (s.cpu > 5 || s.interval > (1000 / loop.targetFps) * 1.4) searchSlow++;
+            }
+            wrapped(s);
+          };
+          const done = engineMoves(plies);
+          opponent.setPaused(false);
+          await done;
+          opponent.setPaused(true);
+        },
+        o.renderWidth,
+        () => ({ searching: opponent.thinking }),
+      );
+      perf.push = push;
+      opponent.setMode('pass');
+      restoreOpponent();
+      return { ...out, searchFrames, searchSlow, plies: game.history().length, ai: api.aiState() };
+    },
+    /**
+     * Ask the engine for a move, then change the position while it is thinking (new game, undo,
+     * mode switch, side switch) and check that no late reply moved a piece.
+     */
+    async staleTest(movetime = 1500): Promise<unknown> {
+      const out: Record<string, unknown> = {};
+      const staleBefore = opponent.stats.stale;
+      const sideBefore = opponent.humanSide;
+      /** Whether the engine was mid-search at the moment of the disturbance. */
+      let thinkingAt = false;
+      const watch = async (name: string, setup: () => void, disturb: () => void | Promise<void>, expectFen: () => string): Promise<void> => {
+        opponent.setMode('pass');
+        setup();
+        const appliedBefore = opponent.stats.applied;
+        await sleep(300);
+        thinkingAt = false;
+        await disturb();
+        const thinking = thinkingAt;
+        const fen = expectFen();
+        await sleep(movetime + 800);
+        out[name] = { wasThinking: thinking, appliedLate: opponent.stats.applied - appliedBefore, fenUnchanged: game.fen() === fen, busy: controller.isBusy, consistent: api.consistent() };
+      };
+      // Engine to move as Obsidian after 1.e4; then a new game in pass-and-play.
+      await watch(
+        'newGame',
+        () => {
+          controller.start();
+          api.ai('computer', { side: 'w', movetime, pauseMs: 0 });
+          return;
+        },
+        async () => {
+          await api.move('e2e4');
+          await sleep(200);
+          thinkingAt = opponent.thinking;
+          opponent.setMode('pass');
+          opponent.newGame();
+        },
+        () => game.fen(),
+      );
+      await watch(
+        'undo',
+        () => {
+          controller.start();
+          api.ai('computer', { side: 'w', movetime, pauseMs: 0 });
+        },
+        async () => {
+          await api.move('d2d4');
+          await sleep(200);
+          thinkingAt = opponent.thinking;
+          await opponent.undo();
+          opponent.setMode('pass');
+        },
+        () => game.fen(),
+      );
+      await watch(
+        'modeSwitch',
+        () => {
+          controller.start();
+          api.ai('computer', { side: 'w', movetime, pauseMs: 0 });
+        },
+        async () => {
+          await api.move('c2c4');
+          await sleep(200);
+          thinkingAt = opponent.thinking;
+          opponent.setMode('pass');
+        },
+        () => game.fen(),
+      );
+      await watch(
+        'sideSwitch',
+        () => {
+          controller.start();
+          api.ai('computer', { side: 'w', movetime, pauseMs: 0 });
+        },
+        async () => {
+          await api.move('g1f3');
+          await sleep(200);
+          thinkingAt = opponent.thinking;
+          // Now the human plays Obsidian: the reply in flight was for the old arrangement.
+          opponent.setSide('b');
+          opponent.setMode('pass');
+        },
+        () => game.fen(),
+      );
+      // Raw wrapper: a request superseded by another resolves null, and the second still answers.
+      const first = engine.bestMove('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1', { skill: 20, movetime });
+      await sleep(100);
+      const second = engine.bestMove('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', { skill: 20, movetime: 200 });
+      const [a, b] = await Promise.all([first, second]);
+      out.superseded = { first: a, second: b, secondLegalForWhite: b ? /^[a-h][12]/.test(b) : false };
+      out.staleDropped = opponent.stats.stale - staleBefore;
+      opponent.setSide(sideBefore);
+      restoreOpponent();
+      return out;
     },
     /**
      * How many times the whole frame can be rendered per display refresh before frames drop:
